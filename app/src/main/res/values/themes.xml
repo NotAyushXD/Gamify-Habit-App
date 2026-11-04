@@ -1,0 +1,4 @@
+<resources>
+    <!-- Only the window before Compose draws. Compose sets all real colours (ui/Theme.kt). -->
+    <style name="Theme.HabitQuest" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
