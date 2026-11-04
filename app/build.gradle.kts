@@ -56,4 +56,6 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric) // runs Android code (here: Room) on the Mac
+    testImplementation(libs.androidx.test.core)
 }

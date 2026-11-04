@@ -52,7 +52,22 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 - The day-close task must catch up on all unclosed days whenever it runs (worker, app start, before scoring).
 - Commit after each working piece.
 
+## Toolchain
+
+- Android Studio 2026.2. Its bundled JDK is **Java 25**, so tools must support it: Gradle 9.8, AGP 9.4 (built-in Kotlin: do not apply `org.jetbrains.kotlin.android`), Kotlin 2.4, KSP 2.3.
+- Versions live in `gradle/libs.versions.toml`. Prefer releases at least two weeks old.
+- compileSdk 37 (installed), targetSdk 36.
+- Tests: `app/src/test` — `ScoringTest` (pure rules) and `HabitRepositoryTest` (Robolectric + in-memory Room, with a fake clock that moves through days).
+
 ## Commands
+
+The shell needs `JAVA_HOME` and the SDK tools on `PATH` (set in `~/.zshrc`):
+
+```bash
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+```
 
 ```bash
 ./gradlew testDebugUnitTest   # run unit tests (like pytest)
