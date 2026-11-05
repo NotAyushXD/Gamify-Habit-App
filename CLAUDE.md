@@ -56,6 +56,8 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 | History | Edit time, mark not done, or add a missed session on any day since the habit was created. A closed-day edit replays that habit's streak from its creation; only days from the edited day on are rescored (earlier points stay). Daily bonuses from that day on are rechecked. |
 | Summary | Day/Week/Month. Habit consistency = done scheduled habit-days ÷ scheduled habit-days (today counts only once done; creation day not a miss). Unscheduled done days shown as "extra". Tasks: on-time share of tasks due in the period, completed, average days late, open/overdue now. |
 | Popup host | Overlay `ComposeView` in a `specialUse` foreground service (`PopupService`), started from an exact-alarm receiver. Without the overlay permission: a notification that opens `PopupActivity`. |
+| Summary page (v0.3) | Two views. Overview: praise headline (never negative), stacked rings Habits (green) / Tasks on time (blue) / Perfect days (orange) with points in the centre, "You're growing" card only when this period ≥ the last, highlights, badges with "next up" progress. Habits: one ring per habit (max 6) + week bars / month calendar. Logic in `stats/Motivation.kt`. |
+| Sharing | Release APKs are signed with a private key: `~/.habitquest/habitquest-release.jks`, passwords in `~/.gradle/gradle.properties` (`HABITQUEST_*`), never in the repo. The developer's own phone keeps the debug build (`installDebug`); a release APK cannot install over it without uninstalling (data loss). Shared APKs go to `dist/` (ignored). |
 
 ## Code rules
 
@@ -73,6 +75,9 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 - Versions live in `gradle/libs.versions.toml`. Prefer releases at least two weeks old.
 - compileSdk 37 (installed), targetSdk 36.
 - Tests: `app/src/test` — `ScoringTest` (pure rules), `HabitRepositoryTest` (Robolectric + in-memory Room, with a fake clock that moves through days), `MigrationTest` (builds an old-version database from `app/schemas` and opens it with current code). Add a migration test case for every schema version.
+- Robolectric runs on Android 15 (`app/src/test/resources/robolectric.properties`, `sdk=35`) with a plain `Application`: the Android 16 runtime fails on Java 25, and `HabitQuestApp` schedules WorkManager on start.
+- `SummaryRenderTest` renders a screen to PNG in `app/build/render/` (Robolectric native graphics). Use it to check UI changes without a phone.
+- Do not chain `git commit` after a build in one shell line unless the commit is guarded by the build's exit status (`if ./gradlew …; then git commit …; fi`).
 
 ## Commands
 
@@ -92,5 +97,6 @@ Give the developer commands with no `#` comments: interactive zsh does not treat
 | `./gradlew installDebug` | Build and install on the connected phone (keeps app data) |
 | `adb devices` | Check the phone is connected |
 | `adb logcat -s HabitQuest` | App logs |
+| `./gradlew assembleRelease` | Signed APK for friends: `app/build/outputs/apk/release/app-release.apk` (copy to `dist/`) |
 
 If `adb devices` lists the phone more than once (USB + wireless), `installDebug` can fail. Install the built APK on one connection: `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`.
