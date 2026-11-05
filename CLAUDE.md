@@ -69,9 +69,13 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
-```bash
-./gradlew testDebugUnitTest   # run unit tests (like pytest)
-./gradlew installDebug        # build and install on the connected phone (keeps app data)
-adb devices                   # check the phone is connected
-adb logcat -s HabitQuest      # app logs
-```
+Give the developer commands with no `#` comments: interactive zsh does not treat `#` as a comment and passes it as an argument.
+
+| Command | What it does |
+| --- | --- |
+| `./gradlew testDebugUnitTest` | Run unit tests (like pytest) |
+| `./gradlew installDebug` | Build and install on the connected phone (keeps app data) |
+| `adb devices` | Check the phone is connected |
+| `adb logcat -s HabitQuest` | App logs |
+
+If `adb devices` lists the phone more than once (USB + wireless), `installDebug` can fail. Install the built APK on one connection: `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`.
