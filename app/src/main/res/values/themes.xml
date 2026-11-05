@@ -1,4 +1,9 @@
 <resources>
     <!-- Only the window before Compose draws. Compose sets all real colours (ui/Theme.kt). -->
     <style name="Theme.HabitQuest" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- See-through window for PopupActivity: the popup card floats over whatever was on screen. -->
+    <style name="Theme.HabitQuest.Popup" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
 </resources>

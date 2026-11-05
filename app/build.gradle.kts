@@ -12,8 +12,8 @@ android {
         applicationId = "com.ayushpant.habitquest"
         minSdk = 29 // Android 10 (spec section 4)
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-step1"
+        versionCode = 2
+        versionName = "0.2.0-step2"
     }
 
     buildTypes {
@@ -27,6 +27,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true // gives BuildConfig.VERSION_NAME for the Settings screen
     }
 }
 
@@ -40,6 +41,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.service) // hosts the popup drawn over other apps
     implementation(libs.androidx.navigation.compose)
 
     implementation(platform(libs.androidx.compose.bom))
