@@ -12,8 +12,8 @@ android {
         applicationId = "com.ayushpant.habitquest"
         minSdk = 29 // Android 10 (spec section 4)
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-step2"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -24,6 +24,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true // needed to render screens in tests
     }
     buildFeatures {
         compose = true
@@ -60,4 +63,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.robolectric) // runs Android code (here: Room) on the Mac
     testImplementation(libs.androidx.test.core)
+    // Renders screens to PNG on the Mac (SummaryRenderTest), to check the look without a phone
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

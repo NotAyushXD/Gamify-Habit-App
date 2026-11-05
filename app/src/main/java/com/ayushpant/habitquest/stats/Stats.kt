@@ -52,15 +52,22 @@ data class HabitSummary(
     val rate: Double? get() = if (scheduled == 0) null else done.toDouble() / scheduled
 }
 
-/** One day in the Summary chart. [scheduled] = 0 means nothing to do, or a future day. */
-data class DayCell(val day: LocalDate, val scheduled: Int, val done: Int) {
+/**
+ * One day in the Summary chart. [scheduled] = 0 means nothing to do, or a future day.
+ * [pending] = habits planned today that are not done yet (they are not in [scheduled] until done).
+ */
+data class DayCell(val day: LocalDate, val scheduled: Int, val done: Int, val pending: Int = 0) {
     val rate: Double? get() = if (scheduled == 0) null else done.toDouble() / scheduled
+    /** Every planned habit of the day done. */
+    val perfect: Boolean get() = scheduled > 0 && done == scheduled && pending == 0
 }
 
 data class TaskSummary(
     /** Tasks done in the range. */
     val completed: Int,
     val completedOnTime: Int,
+    /** Done before the due date (a subset of [completedOnTime]). */
+    val completedEarly: Int = 0,
     /** Average days late, of the tasks done late. Null if none were late. */
     val averageDaysLate: Double?,
     val points: Int,
@@ -79,10 +86,25 @@ data class Summary(
     val habits: List<HabitSummary>,
     val days: List<DayCell>,
     val tasks: TaskSummary,
+    val today: LocalDate = to,
+    /** Points earned on each day of the range. */
+    val dayPoints: Map<LocalDate, Int> = emptyMap(),
+    /** Sessions that got the comeback bonus. */
+    val comebacks: Int = 0,
 ) {
     val scheduled get() = habits.sumOf { it.scheduled }
     val done get() = habits.sumOf { it.done }
     val habitRate: Double? get() = if (scheduled == 0) null else done.toDouble() / scheduled
+
+    val perfectDays: Int get() = days.count { it.perfect }
+    /** Days with something planned that are over, plus today once it is perfect. */
+    val plannedDays: Int get() = days.count { (it.day < today && it.scheduled > 0) || (it.day == today && it.perfect) }
+    val perfectRate: Double? get() = if (plannedDays == 0) null else perfectDays.toDouble() / plannedDays
+
+    /** Share of tasks due in the range that were done by their due date. */
+    val taskRate: Double? get() = if (tasks.dueInRange == 0) null else tasks.dueInRangeOnTime.toDouble() / tasks.dueInRange
+
+    val bestDay: Pair<LocalDate, Int>? get() = dayPoints.filterValues { it > 0 }.maxByOrNull { it.value }?.toPair()
 }
 
 /**
@@ -133,13 +155,18 @@ fun buildSummary(data: RangeData, today: LocalDate): Summary {
     val cells = data.from.daysUntil(data.to).map { day ->
         var scheduled = 0
         var done = 0
+        var pending = 0
         for (habit in active) {
             val isDone = day in doneDays[habit.id].orEmpty()
-            if (!counts(habit, day, today, isDone) || !isScheduledOn(habit.daysMask, day)) continue
+            if (!isScheduledOn(habit.daysMask, day)) continue
+            if (!counts(habit, day, today, isDone)) {
+                if (day == today && day >= habit.createdDate) pending++
+                continue
+            }
             scheduled++
             if (isDone) done++
         }
-        DayCell(day, scheduled, done)
+        DayCell(day, scheduled, done, pending)
     }
 
     val inRange = { d: LocalDate? -> d != null && d >= data.from && d <= data.to }
@@ -149,6 +176,7 @@ fun buildSummary(data: RangeData, today: LocalDate): Summary {
     val taskSummary = TaskSummary(
         completed = doneTasks.size,
         completedOnTime = doneTasks.size - late.size,
+        completedEarly = doneTasks.count { daysLate(it.dueDate, it.doneDay!!) < 0 },
         averageDaysLate = if (late.isEmpty()) null else late.average(),
         points = doneTasks.sumOf { it.points },
         dueInRange = dueTasks.size,
@@ -164,6 +192,13 @@ fun buildSummary(data: RangeData, today: LocalDate): Summary {
         habits = habitSummaries,
         days = cells,
         tasks = taskSummary,
+        today = today,
+        dayPoints = buildMap {
+            for (x in data.sessions) merge(x.day, x.points, Int::plus)
+            for (b in data.bonuses) merge(b.day, b.points, Int::plus)
+            for (t in doneTasks) merge(t.doneDay!!, t.points, Int::plus)
+        },
+        comebacks = data.sessions.count { it.bonusPoints > 0 },
     )
 }
 
