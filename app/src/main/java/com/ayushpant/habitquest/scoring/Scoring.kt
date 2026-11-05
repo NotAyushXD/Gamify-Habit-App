@@ -5,6 +5,7 @@ import java.math.RoundingMode
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
 /*
@@ -45,10 +46,25 @@ fun evidenceFactor(evidenceFound: Boolean, cfg: ScoringConfig = ScoringConfig.DE
  * BigDecimal avoids float surprises such as 13.5 being stored as 13.4999… and rounding down.
  */
 fun sessionPoints(base: Int, timing: Double, streak: Double, evidence: Double): Int =
-    listOf(timing, streak, evidence)
+    roundedPoints(base, timing, streak, evidence)
+
+private fun roundedPoints(base: Int, vararg factors: Double): Int =
+    factors
         .fold(BigDecimal(base)) { acc, factor -> acc * BigDecimal.valueOf(factor) }
         .setScale(0, RoundingMode.HALF_UP)
         .toInt()
+
+/** Task factor: the on-time bonus, or a cut that grows with the number of days late. */
+fun taskFactor(daysLate: Long, cfg: ScoringConfig = ScoringConfig.DEFAULT): Double =
+    if (daysLate <= 0) cfg.taskOnTime
+    else cfg.taskLateTiers.firstOrNull { (minDays, _) -> daysLate >= minDays }?.second ?: cfg.taskLateTiers.last().second
+
+/** Days after [dueDate] that [doneDate] is. 0 or less means on time. */
+fun daysLate(dueDate: LocalDate, doneDate: LocalDate): Long = ChronoUnit.DAYS.between(dueDate, doneDate)
+
+/** Points for a task done on [doneDate] (or worth now, if [doneDate] is today and it is still open). */
+fun taskPoints(base: Int, dueDate: LocalDate, doneDate: LocalDate, cfg: ScoringConfig = ScoringConfig.DEFAULT): Int =
+    roundedPoints(base, taskFactor(daysLate(dueDate, doneDate), cfg))
 
 /** The parts of a habit that scoring needs. */
 data class HabitRules(

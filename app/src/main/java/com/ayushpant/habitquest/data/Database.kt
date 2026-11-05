@@ -1,6 +1,7 @@
 package com.ayushpant.habitquest.data
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Insert
@@ -69,6 +70,22 @@ interface SessionDao {
 }
 
 @Dao
+interface TaskDao {
+    /** Open tasks (any due date) and tasks done on [day]. */
+    @Query("SELECT * FROM task WHERE active = 1 AND (done_day IS NULL OR done_day = :day) ORDER BY due_date, id")
+    fun observeForDay(day: LocalDate): Flow<List<Task>>
+
+    @Query("SELECT * FROM task WHERE id = :id")
+    suspend fun get(id: Long): Task?
+
+    @Insert
+    suspend fun insert(task: Task): Long
+
+    @Update
+    suspend fun update(task: Task)
+}
+
+@Dao
 interface StreakDao {
     @Query("SELECT * FROM streak")
     fun observeAll(): Flow<List<Streak>>
@@ -119,8 +136,10 @@ class Converters {
 }
 
 @Database(
-    version = 1,
-    entities = [Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class],
+    version = 2,
+    entities = [Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class],
+    // Room compares app/schemas/…/1.json with 2.json and writes the migration itself (here: add the task table).
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -131,6 +150,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun dayBonus(): DayBonusDao
     abstract fun signals(): SignalLogDao
     abstract fun appState(): AppStateDao
+    abstract fun tasks(): TaskDao
 
     companion object {
         fun create(context: Context): AppDatabase =

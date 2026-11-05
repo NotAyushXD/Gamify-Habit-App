@@ -41,6 +41,7 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 | Rounding | Half up, done with BigDecimal so 13.5 always becomes 14. |
 | Delete habit | Soft delete (`active = false`) so history and points stay. |
 | Today's points | XP and coins are added in Step 5. Until then, the Today screen shows "points today". |
+| Tasks (added after Step 1) | One-off item with a due date, own `task` table (DB v2). Chosen with a Habit/Task switch when creating. Stays on Today until done; marked overdue, no penalty for being open. Points = base × 1.2 if done by the due date; late: 1+ days ×0.8, 3+ ×0.6, 7+ ×0.4, 14+ ×0.2 (never 0). No streak, no window, not part of the daily bonus. Values in `ScoringConfig`. |
 
 ## Code rules
 
@@ -57,7 +58,7 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 - Android Studio 2026.2. Its bundled JDK is **Java 25**, so tools must support it: Gradle 9.8, AGP 9.4 (built-in Kotlin: do not apply `org.jetbrains.kotlin.android`), Kotlin 2.4, KSP 2.3.
 - Versions live in `gradle/libs.versions.toml`. Prefer releases at least two weeks old.
 - compileSdk 37 (installed), targetSdk 36.
-- Tests: `app/src/test` — `ScoringTest` (pure rules) and `HabitRepositoryTest` (Robolectric + in-memory Room, with a fake clock that moves through days).
+- Tests: `app/src/test` — `ScoringTest` (pure rules), `HabitRepositoryTest` (Robolectric + in-memory Room, with a fake clock that moves through days), `MigrationTest` (builds an old-version database from `app/schemas` and opens it with current code). Add a migration test case for every schema version.
 
 ## Commands
 

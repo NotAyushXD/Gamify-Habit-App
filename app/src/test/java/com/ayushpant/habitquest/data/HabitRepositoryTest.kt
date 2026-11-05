@@ -196,4 +196,61 @@ class HabitRepositoryTest {
         assertTrue(today().habits.isEmpty())
         assertEquals(10, db.sessions().getConfirmed(id, monday).single().points)
     }
+
+    // ---- Tasks ------------------------------------------------------------------------------------
+
+    private fun newTask(due: LocalDate, base: Int = 10) = runBlocking {
+        repo.saveTask(Task(name = "Renew passport", dueDate = due, basePoints = base, createdDate = monday))
+    }
+    private fun taskToday(id: Long) = today().tasks.single { it.task.id == id }
+
+    @Test
+    fun `task done by the due date gets the on-time bonus`() = runBlocking {
+        val id = newTask(due = monday.plusDays(2))
+        setTime(monday, 10, 0)
+        assertEquals(12, taskToday(id).points) // worth, while open
+        repo.completeTask(id)
+        assertTrue(taskToday(id).isDone)
+        assertEquals(12, taskToday(id).points)
+        assertEquals(12, today().totalPoints)
+    }
+
+    @Test
+    fun `overdue task stays on Today and its worth drops, then it scores for the day it is done`() = runBlocking {
+        val id = newTask(due = monday)
+        setTime(monday.plusDays(4), 10, 0) // Friday, 4 days late
+        val open = taskToday(id)
+        assertFalse(open.isDone)
+        assertEquals(4L, open.daysLate)
+        assertEquals(6, open.points)
+        repo.completeTask(id)
+        assertEquals(6, taskToday(id).points)
+    }
+
+    @Test
+    fun `done task leaves Today the next day`() = runBlocking {
+        val id = newTask(due = monday)
+        setTime(monday, 10, 0); repo.completeTask(id)
+        setTime(monday.plusDays(1), 10, 0)
+        assertTrue(today().tasks.none { it.task.id == id })
+    }
+
+    @Test
+    fun `reopening a task removes its points`() = runBlocking {
+        val id = newTask(due = monday)
+        setTime(monday, 10, 0); repo.completeTask(id)
+        repo.reopenTask(id)
+        val t = taskToday(id)
+        assertFalse(t.isDone)
+        assertEquals(0, db.tasks().get(id)!!.points)
+        assertEquals(0, today().totalPoints)
+    }
+
+    @Test
+    fun `tasks do not count toward the daily bonus`() = runBlocking {
+        val habit = newHabit()
+        newTask(due = monday) // open task due today
+        setTime(monday, 7, 0); repo.tickHabit(habit)
+        assertEquals(10, today().dailyBonus) // the open task does not block the bonus
+    }
 }

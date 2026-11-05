@@ -98,3 +98,19 @@ data class AppState(
     @PrimaryKey val key: String,
     val value: String,
 )
+
+/** A one-off task with a due date. Not in the spec; see CLAUDE.md. Added in database version 2. */
+@Entity(tableName = "task")
+data class Task(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    @ColumnInfo(name = "due_date") val dueDate: LocalDate,
+    @ColumnInfo(name = "base_points") val basePoints: Int,
+    @ColumnInfo(name = "created_date") val createdDate: LocalDate,
+    /** The local date the task was done. Null while it is open. */
+    @ColumnInfo(name = "done_day") val doneDay: LocalDate? = null,
+    /** Epoch milliseconds. Null while it is open. */
+    @ColumnInfo(name = "done_at") val doneAt: Long? = null,
+    val points: Int = 0,
+    val active: Boolean = true,
+)

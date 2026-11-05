@@ -49,6 +49,7 @@ import androidx.lifecycle.viewModelScope
 import com.ayushpant.habitquest.data.HabitRepository
 import com.ayushpant.habitquest.data.HabitToday
 import com.ayushpant.habitquest.data.Session
+import com.ayushpant.habitquest.data.TaskToday
 import com.ayushpant.habitquest.data.TodayData
 import com.ayushpant.habitquest.scoring.ScoringConfig
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -93,20 +94,26 @@ class TodayViewModel(private val repo: HabitRepository) : ViewModel() {
     fun remove(sessionId: Long) = viewModelScope.launch { repo.removeSession(sessionId) }
     fun editStart(sessionId: Long, time: LocalTime) = viewModelScope.launch { repo.editSessionStart(sessionId, time) }
     fun timeOf(session: Session): LocalTime = repo.localTimeOf(session.startTime)
+
+    fun completeTask(taskId: Long) = viewModelScope.launch { repo.completeTask(taskId) }
+    fun reopenTask(taskId: Long) = viewModelScope.launch { repo.reopenTask(taskId) }
 }
 
 private val HHMM = DateTimeFormatter.ofPattern("HH:mm")
 private val DAY_TITLE = DateTimeFormatter.ofPattern("EEEE d MMMM")
+private val DUE_DAY = DateTimeFormatter.ofPattern("EEE d MMM")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(
     vm: TodayViewModel,
-    onAddHabit: () -> Unit,
+    onAdd: () -> Unit,
     onEditHabit: (Long) -> Unit,
+    onEditTask: (Long) -> Unit,
 ) {
     val data by vm.state.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<Session?>(null) }
+    var reopening by remember { mutableStateOf<TaskToday?>(null) }
 
     LifecycleResumeEffect(Unit) {
         vm.refresh()
@@ -123,7 +130,7 @@ fun TodayScreen(
             })
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddHabit) { Icon(Icons.Default.Add, contentDescription = "Add habit") }
+            FloatingActionButton(onClick = onAdd) { Icon(Icons.Default.Add, contentDescription = "Add habit or task") }
         },
     ) { padding ->
         val today = data ?: return@Scaffold
@@ -133,10 +140,10 @@ fun TodayScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { SummaryCard(today) }
-            if (today.habits.isEmpty()) {
+            if (today.habits.isEmpty() && today.tasks.isEmpty()) {
                 item {
                     Text(
-                        "No habits yet. Tap + to add your first habit.",
+                        "Nothing here yet. Tap + to add a habit or a task.",
                         modifier = Modifier.padding(top = 32.dp),
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -154,7 +161,29 @@ fun TodayScreen(
                     onEdit = { onEditHabit(h.habit.id) },
                 )
             }
+            if (today.tasks.isNotEmpty()) {
+                item {
+                    Text("Tasks", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+            items(today.tasks, key = { "task-${it.task.id}" }) { t ->
+                TaskTile(
+                    t = t,
+                    onTick = { if (t.isDone) reopening = t else vm.completeTask(t.task.id) },
+                    onEdit = { onEditTask(t.task.id) },
+                )
+            }
         }
+    }
+
+    reopening?.let { t ->
+        AlertDialog(
+            onDismissRequest = { reopening = null },
+            title = { Text("Mark \"${t.task.name}\" as not done?") },
+            text = { Text("Its +${t.points} points are removed. When you finish it again, it is scored for that day.") },
+            confirmButton = { TextButton(onClick = { vm.reopenTask(t.task.id); reopening = null }) { Text("Not done") } },
+            dismissButton = { TextButton(onClick = { reopening = null }) { Text("Cancel") } },
+        )
     }
 
     editing?.let { s ->
@@ -245,6 +274,40 @@ private fun HabitTile(
         }
     }
 }
+
+@Composable
+private fun TaskTile(t: TaskToday, onTick: () -> Unit, onEdit: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(enabled = t.isDone, onClick = onTick),
+        colors = if (t.isDone) {
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        } else {
+            CardDefaults.cardColors()
+        },
+    ) {
+        Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(t.task.name, style = MaterialTheme.typography.titleMedium)
+                val due = when {
+                    t.isDone && t.daysLate > 0 -> "Done ${dayCount(t.daysLate)} late  ·  +${t.points}"
+                    t.isDone -> "Done on time  ·  +${t.points}"
+                    t.daysLate > 0 -> "Overdue by ${dayCount(t.daysLate)}  ·  now worth ${t.points}"
+                    t.daysLate == 0L -> "Due today  ·  worth ${t.points}"
+                    else -> "Due ${t.task.dueDate.format(DUE_DAY)}  ·  worth ${t.points}"
+                }
+                Text(
+                    due,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (!t.isDone && t.daysLate > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Checkbox(checked = t.isDone, onCheckedChange = { onTick() })
+            IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, contentDescription = "Edit task") }
+        }
+    }
+}
+
+private fun dayCount(days: Long) = if (days == 1L) "1 day" else "$days days"
 
 /** Opens for a done habit: fix the time, or remove a mistaken tick. */
 @Composable

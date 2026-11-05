@@ -211,6 +211,25 @@ class ScoringTest {
         assertTrue(isScheduledOn(EVERY_DAY_MASK, mon.plusDays(6)))
     }
 
+    // ---- Tasks ------------------------------------------------------------------------------------
+
+    @Test
+    fun `task done on or before the due date gets the on-time bonus`() {
+        assertEquals(12, taskPoints(10, dueDate = mon, doneDate = mon))
+        assertEquals(12, taskPoints(10, dueDate = mon, doneDate = mon.minusDays(3)))
+    }
+
+    @Test
+    fun `task done late loses more the longer it waits`() {
+        val late = listOf(1, 2, 3, 6, 7, 13, 14, 60).map { taskPoints(10, mon, mon.plusDays(it.toLong())) }
+        assertEquals(listOf(8, 8, 6, 6, 4, 4, 2, 2), late)
+    }
+
+    @Test
+    fun `a late task is never worth 0`() {
+        assertEquals(1, taskPoints(5, mon, mon.plusDays(365))) // 5 × 0.2 = 1
+    }
+
     @Test
     fun `config values can be changed for tuning`() {
         val cfg = ScoringConfig(dailyBonus = 25)

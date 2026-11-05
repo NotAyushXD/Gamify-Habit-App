@@ -11,7 +11,9 @@ import com.ayushpant.habitquest.scoring.closeDay
 import com.ayushpant.habitquest.scoring.dailyBonus
 import com.ayushpant.habitquest.scoring.dayOutcome
 import com.ayushpant.habitquest.scoring.isScheduledOn
+import com.ayushpant.habitquest.scoring.daysLate
 import com.ayushpant.habitquest.scoring.scoreHabitDay
+import com.ayushpant.habitquest.scoring.taskPoints
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import java.time.Clock
@@ -36,12 +38,25 @@ data class HabitToday(
     val points get() = done.sumOf { it.points }
 }
 
+/** One task as the Today screen shows it. */
+data class TaskToday(
+    val task: Task,
+    /** Days past the due date: when it was done, or today if it is still open. 0 or less = on time. */
+    val daysLate: Long,
+    /** Points it got (done), or points it is worth if done today (open). */
+    val points: Int,
+) {
+    val isDone get() = task.doneDay != null
+}
+
 data class TodayData(
     val day: LocalDate,
     val habits: List<HabitToday>,
     val dailyBonus: Int,
+    /** Open tasks (soonest due first), then tasks done today. */
+    val tasks: List<TaskToday> = emptyList(),
 ) {
-    val totalPoints get() = habits.sumOf { it.points } + dailyBonus
+    val totalPoints get() = habits.sumOf { it.points } + dailyBonus + tasks.filter { it.isDone }.sumOf { it.points }
 }
 
 /**
@@ -67,7 +82,8 @@ class HabitRepository(
         db.sessions().observeForDay(day),
         db.streaks().observeAll(),
         db.dayBonus().observe(day),
-    ) { habits, sessions, streaks, bonus ->
+        db.tasks().observeForDay(day),
+    ) { habits, sessions, streaks, bonus, tasks ->
         val streakByHabit = streaks.associateBy { it.habitId }
         TodayData(
             day = day,
@@ -84,6 +100,16 @@ class HabitRepository(
                 )
             },
             dailyBonus = bonus?.points ?: 0,
+            tasks = tasks
+                .map { t ->
+                    val doneOn = t.doneDay ?: day
+                    TaskToday(
+                        task = t,
+                        daysLate = daysLate(t.dueDate, doneOn),
+                        points = if (t.doneDay != null) t.points else taskPoints(t.basePoints, t.dueDate, day, cfg),
+                    )
+                }
+                .sortedBy { it.isDone },
         )
     }
 
@@ -115,6 +141,44 @@ class HabitRepository(
             db.habits().update(habit.copy(active = false))
             rescoreDay(today())
         }
+    }
+
+    // ---- Tasks (one-off, with a due date) -------------------------------------------------------
+
+    suspend fun getTask(id: Long): Task? = db.tasks().get(id)
+
+    /** Inserts a new task (id = 0) or updates one. A done task is scored again for its new due date. */
+    suspend fun saveTask(task: Task): Long {
+        val clean = task.copy(basePoints = task.basePoints.coerceIn(cfg.minBasePoints, cfg.maxBasePoints))
+        return if (clean.id == 0L) {
+            db.tasks().insert(clean.copy(createdDate = today()))
+        } else {
+            val points = clean.doneDay?.let { taskPoints(clean.basePoints, clean.dueDate, it, cfg) } ?: 0
+            db.tasks().update(clean.copy(points = points))
+            clean.id
+        }
+    }
+
+    /** Tick: the task is done today. */
+    suspend fun completeTask(id: Long) {
+        val t = db.tasks().get(id) ?: return
+        if (t.doneDay != null) return
+        val day = today()
+        db.tasks().update(
+            t.copy(doneDay = day, doneAt = clock.millis(), points = taskPoints(t.basePoints, t.dueDate, day, cfg))
+        )
+    }
+
+    /** "Not done": the task is open again and its points are removed. */
+    suspend fun reopenTask(id: Long) {
+        val t = db.tasks().get(id) ?: return
+        db.tasks().update(t.copy(doneDay = null, doneAt = null, points = 0))
+    }
+
+    /** Soft delete: the task disappears, but points it already got stay. */
+    suspend fun deleteTask(id: Long) {
+        val t = db.tasks().get(id) ?: return
+        db.tasks().update(t.copy(active = false))
     }
 
     // ---- Sessions (manual habits) --------------------------------------------------------------

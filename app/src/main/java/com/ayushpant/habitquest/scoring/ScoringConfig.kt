@@ -38,8 +38,19 @@ data class ScoringConfig(
     val streakFloorAfterDecay: Int = 1,
     val comebackBonus: Int = 5,
 
-    // 7.4 Daily bonus
+    // 7.4 Daily bonus (habits only; tasks never count toward it)
     val dailyBonus: Int = 10,
+
+    // Tasks (one-off, with a due date; not in the spec, see CLAUDE.md).
+    // Points = Base × task factor. Done on or before the due date gets the on-time bonus.
+    val taskOnTime: Double = 1.2,
+    // Done late: (minimum days late, factor), checked from the top. Never 0, so finishing always pays.
+    val taskLateTiers: List<Pair<Int, Double>> = listOf(
+        14 to 0.2,
+        7 to 0.4,
+        3 to 0.6,
+        1 to 0.8,
+    ),
 
     // 6.3 Day close runs at this time and closes the previous day.
     val dayCloseTime: LocalTime = LocalTime.of(0, 5),

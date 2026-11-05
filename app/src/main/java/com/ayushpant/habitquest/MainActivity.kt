@@ -12,8 +12,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.ayushpant.habitquest.ui.HabitEditorScreen
+import com.ayushpant.habitquest.ui.EditorScreen
 import com.ayushpant.habitquest.ui.HabitQuestTheme
+import com.ayushpant.habitquest.ui.ItemKind
 import com.ayushpant.habitquest.ui.TodayScreen
 import com.ayushpant.habitquest.ui.TodayViewModel
 
@@ -32,16 +33,21 @@ class MainActivity : ComponentActivity() {
                         val vm: TodayViewModel = viewModel(factory = viewModelFactory { initializer { TodayViewModel(repo) } })
                         TodayScreen(
                             vm = vm,
-                            onAddHabit = { nav.navigate("habit/0") },
+                            onAdd = { nav.navigate("habit/0") },
                             onEditHabit = { id -> nav.navigate("habit/$id") },
+                            onEditTask = { id -> nav.navigate("task/$id") },
                         )
                     }
-                    composable("habit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                        HabitEditorScreen(
-                            repo = repo,
-                            habitId = entry.arguments?.getLong("id") ?: 0L,
-                            onDone = { nav.popBackStack() },
-                        )
+                    // id 0 = new item; the editor then shows the Habit | Task switch.
+                    for ((route, kind) in listOf("habit" to ItemKind.HABIT, "task" to ItemKind.TASK)) {
+                        composable("$route/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
+                            EditorScreen(
+                                repo = repo,
+                                initialKind = kind,
+                                id = entry.arguments?.getLong("id") ?: 0L,
+                                onDone = { nav.popBackStack() },
+                            )
+                        }
                     }
                 }
             }
