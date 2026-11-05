@@ -16,9 +16,24 @@ android {
         versionName = "0.3.0"
     }
 
+    // Release key for APKs shared with friends. The key and passwords live outside the project,
+    // in ~/.gradle/gradle.properties (HABITQUEST_*), so they never go into git.
+    val storeFilePath = providers.gradleProperty("HABITQUEST_STORE_FILE").orNull
+    signingConfigs {
+        if (storeFilePath != null) {
+            create("release") {
+                storeFile = file(storeFilePath)
+                storePassword = providers.gradleProperty("HABITQUEST_STORE_PASSWORD").get()
+                keyAlias = providers.gradleProperty("HABITQUEST_KEY_ALIAS").get()
+                keyPassword = providers.gradleProperty("HABITQUEST_KEY_PASSWORD").get()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {

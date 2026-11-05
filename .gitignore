@@ -20,3 +20,6 @@ local.properties
 # Signing keys (never commit)
 *.jks
 *.keystore
+
+# APKs built for sharing
+dist/
