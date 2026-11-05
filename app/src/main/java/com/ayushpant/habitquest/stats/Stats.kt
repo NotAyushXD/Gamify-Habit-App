@@ -56,8 +56,19 @@ data class HabitSummary(
  * One day in the Summary chart. [scheduled] = 0 means nothing to do, or a future day.
  * [pending] = habits planned today that are not done yet (they are not in [scheduled] until done).
  */
-data class DayCell(val day: LocalDate, val scheduled: Int, val done: Int, val pending: Int = 0) {
+data class DayCell(
+    val day: LocalDate,
+    val scheduled: Int,
+    val done: Int,
+    val pending: Int = 0,
+    /** Tasks due this day that count so far (the day is over, or they were done on time). */
+    val tasksDue: Int = 0,
+    val tasksOnTime: Int = 0,
+    /** Per habit: done (true) or missed (false) this day. No entry = nothing to show (not planned, or not over yet). */
+    val habitDone: Map<Long, Boolean> = emptyMap(),
+) {
     val rate: Double? get() = if (scheduled == 0) null else done.toDouble() / scheduled
+    val taskRate: Double? get() = if (tasksDue == 0) null else tasksOnTime.toDouble() / tasksDue
     /** Every planned habit of the day done. */
     val perfect: Boolean get() = scheduled > 0 && done == scheduled && pending == 0
 }
@@ -152,27 +163,39 @@ fun buildSummary(data: RangeData, today: LocalDate): Summary {
         )
     }
 
+    // A task counts toward "on time" once its due date is over, or once it was done on time.
+    // A task due later in the period is not a failure yet.
+    val onTime = { t: Task -> t.doneDay != null && daysLate(t.dueDate, t.doneDay) <= 0 }
+    val taskCounts = { t: Task -> t.dueDate < today || onTime(t) }
+    val tasksByDue = data.tasks.groupBy { it.dueDate }
+
     val cells = data.from.daysUntil(data.to).map { day ->
         var scheduled = 0
         var done = 0
         var pending = 0
+        val habitDone = mutableMapOf<Long, Boolean>()
         for (habit in active) {
             val isDone = day in doneDays[habit.id].orEmpty()
-            if (!isScheduledOn(habit.daysMask, day)) continue
+            if (!isScheduledOn(habit.daysMask, day)) {
+                if (isDone) habitDone[habit.id] = true // an extra day still closes its ring
+                continue
+            }
             if (!counts(habit, day, today, isDone)) {
                 if (day == today && day >= habit.createdDate) pending++
                 continue
             }
             scheduled++
             if (isDone) done++
+            habitDone[habit.id] = isDone
         }
-        DayCell(day, scheduled, done, pending)
+        val due = tasksByDue[day].orEmpty().filter(taskCounts)
+        DayCell(day, scheduled, done, pending, due.size, due.count(onTime), habitDone)
     }
 
     val inRange = { d: LocalDate? -> d != null && d >= data.from && d <= data.to }
     val doneTasks = data.tasks.filter { inRange(it.doneDay) }
     val late = doneTasks.map { daysLate(it.dueDate, it.doneDay!!) }.filter { it > 0 }
-    val dueTasks = data.tasks.filter { inRange(it.dueDate) }
+    val dueTasks = data.tasks.filter { inRange(it.dueDate) && taskCounts(it) }
     val taskSummary = TaskSummary(
         completed = doneTasks.size,
         completedOnTime = doneTasks.size - late.size,
@@ -180,7 +203,7 @@ fun buildSummary(data: RangeData, today: LocalDate): Summary {
         averageDaysLate = if (late.isEmpty()) null else late.average(),
         points = doneTasks.sumOf { it.points },
         dueInRange = dueTasks.size,
-        dueInRangeOnTime = dueTasks.count { it.doneDay != null && daysLate(it.dueDate, it.doneDay) <= 0 },
+        dueInRangeOnTime = dueTasks.count(onTime),
         openNow = data.openTasks.size,
         overdueNow = data.openTasks.count { it.dueDate < today },
     )

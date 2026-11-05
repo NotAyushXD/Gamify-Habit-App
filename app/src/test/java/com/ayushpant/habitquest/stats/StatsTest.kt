@@ -146,4 +146,30 @@ class StatsTest {
         assertTrue(tue[2] is HistoryEntry.TaskDone)
         assertEquals(22, days[1].points)
     }
+
+    @Test
+    fun `a task due later in the period is not counted as late yet`() {
+        val tasks = listOf(task(1, due = monday.plusDays(6), doneDay = null)) // due Sunday, today Friday
+        val s = buildSummary(week(emptyList(), tasks = tasks, open = tasks), today = friday)
+        assertEquals(0, s.tasks.dueInRange)
+        assertNull(s.taskRate)
+    }
+
+    @Test
+    fun `day cells carry tasks and per-habit done or missed`() {
+        val tasks = listOf(
+            task(1, due = monday, doneDay = monday, points = 12),
+            task(2, due = monday, doneDay = null),
+        )
+        val monWedFri = 0b001_0101
+        val s = buildSummary(
+            week(listOf(habit(1), habit(2, monWedFri)), sessions = listOf(done(1, monday), done(2, monday.plusDays(1))), tasks = tasks),
+            today = friday,
+        )
+        val mon = s.days[0]
+        assertEquals(0.5, mon.taskRate!!, 0.0)
+        assertEquals(mapOf(1L to true, 2L to false), mon.habitDone)
+        assertEquals(mapOf(1L to false, 2L to true), s.days[1].habitDone) // habit 2 done on an extra day
+        assertTrue(s.days[5].habitDone.isEmpty()) // Saturday: in the future
+    }
 }

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
@@ -77,10 +78,16 @@ class SummaryRenderTest {
         compose.setContent { HabitQuestTheme { SummaryScreen(SummaryViewModel(repo)) } }
         compose.waitForIdle()
         compose.mainClock.advanceTimeBy(2_000)
-        save(out, "summary-overview.png")
+        save(out, "summary-week-overview.png")
         compose.onAllNodesWithText("Habits").onFirst().performClick()
         compose.mainClock.advanceTimeBy(2_000)
-        save(out, "summary-habits.png")
+        save(out, "summary-week-habits.png")
+        compose.onNodeWithText("Month").performClick()
+        compose.mainClock.advanceTimeBy(2_000)
+        save(out, "summary-month-habits.png")
+        compose.onNodeWithText("Overview").performClick()
+        compose.mainClock.advanceTimeBy(2_000)
+        save(out, "summary-month-overview.png")
         db.close()
     }
 

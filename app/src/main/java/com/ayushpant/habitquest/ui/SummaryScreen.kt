@@ -4,13 +4,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -78,7 +78,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -108,6 +107,9 @@ class SummaryViewModel(private val repo: HabitRepository) : ViewModel() {
     fun today(): LocalDate = repo.today()
     fun select(p: Period) { period.value = p; anchor.value = repo.today() }
     fun move(steps: Long) { anchor.value = shiftPeriod(period.value, anchor.value, steps) }
+
+    /** Tapping a day in the calendar shows that day. */
+    fun openDay(day: LocalDate) { period.value = Period.DAY; anchor.value = day }
 }
 
 // Ring colours: fixed (not from the wallpaper theme) so each ring always means the same thing.
@@ -119,6 +121,8 @@ private val HABIT_PALETTE = listOf(
     Color(0xFFFF375F), Color(0xFF5E5CE6), Color(0xFF66D4CF), Color(0xFFAC8E68),
 )
 private const val MAX_HABIT_RINGS = 6
+/** Per-habit rings in a calendar day: more would be too thin to read. */
+private const val MAX_DAY_HABIT_RINGS = 4
 
 private val DAY_LONG = DateTimeFormatter.ofPattern("EEEE d MMMM")
 private val DAY_SHORT = DateTimeFormatter.ofPattern("d MMM")
@@ -166,6 +170,7 @@ fun SummaryScreen(vm: SummaryViewModel) {
             }
             if (view == 0) {
                 item { HeroCard(s, whenText(period, isCurrent)) }
+                if (period != Period.DAY) item { CategoryCalendarCard(s, period, vm::openDay) }
                 val lines = compare(s, st.previous, thanText(period, isCurrent))
                 if (lines.isNotEmpty()) item { ComparisonCard(lines) }
                 val hl = highlights(s)
@@ -181,7 +186,7 @@ fun SummaryScreen(vm: SummaryViewModel) {
                 item { BadgesCard(badges(s)) }
             } else {
                 item { HabitRingsCard(s) }
-                if (period != Period.DAY) item { CalendarCard(s, period) }
+                if (period != Period.DAY) item { HabitCalendarCard(s, period, vm::openDay) }
             }
         }
     }
@@ -217,9 +222,14 @@ private data class Ring(val progress: Double?, val color: Color)
  * animation when the numbers change.
  */
 @Composable
-private fun StackedRings(rings: List<Ring>, size: Dp, center: @Composable () -> Unit) {
-    val gap = 4.dp
-    val stroke = minOf(18.dp, (size / 2 - 36.dp) / rings.size.coerceAtLeast(1) - gap)
+private fun StackedRings(
+    rings: List<Ring>,
+    size: Dp,
+    hole: Dp = 36.dp,
+    gap: Dp = 4.dp,
+    center: @Composable () -> Unit = {},
+) {
+    val stroke = minOf(18.dp, (size / 2 - hole) / rings.size.coerceAtLeast(1) - gap)
     val animated = rings.mapIndexed { i, r ->
         key(i) {
             animateFloatAsState(
@@ -389,66 +399,123 @@ private fun HabitRingsCard(s: Summary) {
 }
 
 @Composable
-private fun CalendarCard(s: Summary, period: Period) {
+private fun CategoryCalendarCard(s: Summary, period: Period, onDay: (LocalDate) -> Unit) {
+    CalendarCard(
+        title = if (period == Period.WEEK) "Your week" else "Your month",
+        s = s,
+        period = period,
+        onDay = onDay,
+        rings = { cell ->
+            listOf(
+                Ring(cell.rate, HABITS_COLOR),
+                Ring(cell.taskRate, TASKS_COLOR),
+                Ring(if (cell.perfect) 1.0 else if (cell.scheduled > 0 && cell.day < s.today) 0.0 else null, PERFECT_COLOR),
+            )
+        },
+        legend = listOf(HABITS_COLOR to "Habits", TASKS_COLOR to "Tasks", PERFECT_COLOR to "Perfect day"),
+    )
+}
+
+@Composable
+private fun HabitCalendarCard(s: Summary, period: Period, onDay: (LocalDate) -> Unit) {
+    if (s.habits.isEmpty()) return
+    val shown = s.habits.take(MAX_DAY_HABIT_RINGS)
+    CalendarCard(
+        title = "Day by day",
+        s = s,
+        period = period,
+        onDay = onDay,
+        rings = { cell ->
+            shown.mapIndexed { i, h ->
+                Ring(cell.habitDone[h.habit.id]?.let { if (it) 1.0 else 0.0 }, HABIT_PALETTE[i % HABIT_PALETTE.size])
+            }
+        },
+        legend = shown.mapIndexed { i, h -> HABIT_PALETTE[i % HABIT_PALETTE.size] to h.habit.name },
+        note = if (s.habits.size > MAX_DAY_HABIT_RINGS) "Days show your first $MAX_DAY_HABIT_RINGS habits." else null,
+    )
+}
+
+/**
+ * A calendar, Monday first: one row for a week, a grid for a month. Every day shows its date and
+ * small stacked rings. Tap a day to see it in the Day view.
+ */
+@Composable
+private fun CalendarCard(
+    title: String,
+    s: Summary,
+    period: Period,
+    onDay: (LocalDate) -> Unit,
+    rings: (DayCell) -> List<Ring>,
+    legend: List<Pair<Color, String>>,
+    note: String? = null,
+) {
+    val leading = if (period == Period.MONTH) s.days.first().day.dayOfWeek.value - 1 else 0
+    val cells: List<DayCell?> = List(leading) { null } + s.days
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (period == Period.WEEK) "Day by day" else "Your month", style = MaterialTheme.typography.titleMedium)
-            if (period == Period.WEEK) WeekBars(s.days) else MonthGrid(s.days)
-            Text("⭐ = every planned habit done that day", style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-/** One bar per day: the share of planned habits done. A star marks a perfect day. */
-@Composable
-private fun WeekBars(days: List<DayCell>) {
-    Row(Modifier.fillMaxWidth().height(130.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (cell in days) {
-            Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(if (cell.perfect) "⭐" else " ", fontSize = 12.sp)
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-                    val rate = cell.rate
-                    Box(
-                        Modifier.fillMaxWidth()
-                            .fillMaxHeight(if (rate == null) 0.04f else maxOf(rate.toFloat(), 0.04f))
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (rate == null) MaterialTheme.colorScheme.surfaceVariant else HABITS_COLOR)
-                    )
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Row {
+                for (letter in listOf("M", "T", "W", "T", "F", "S", "S")) {
+                    Text(letter, style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
                 }
-                Text(cell.day.dayOfWeek.name.take(1), style = MaterialTheme.typography.bodySmall)
             }
-        }
-    }
-}
-
-/** A calendar, Monday first. Brighter = more of the planned habits done; a star = perfect day. */
-@Composable
-private fun MonthGrid(days: List<DayCell>) {
-    val leading = days.first().day.dayOfWeek.value - 1
-    val cells: List<DayCell?> = List(leading) { null } + days
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (letter in listOf("M", "T", "W", "T", "F", "S", "S")) {
-                Text(letter, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-            }
-        }
-        for (week in cells.chunked(7)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                for (i in 0 until 7) {
-                    val cell = week.getOrNull(i)
-                    Box(Modifier.weight(1f).aspectRatio(1f), contentAlignment = Alignment.Center) {
-                        if (cell != null) {
-                            val rate = cell.rate
-                            Box(
-                                Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)).background(
-                                    if (rate == null) MaterialTheme.colorScheme.surfaceVariant
-                                    else HABITS_COLOR.copy(alpha = 0.2f + 0.8f * rate.toFloat())
-                                )
-                            )
-                            Text(if (cell.perfect) "⭐" else "${cell.day.dayOfMonth}", style = MaterialTheme.typography.bodySmall)
+            for (week in cells.chunked(7)) {
+                Row {
+                    for (i in 0 until 7) {
+                        val cell = week.getOrNull(i)
+                        // The rings fill the day's column (about 48 dp on a phone), up to 56 dp.
+                        BoxWithConstraints(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            if (cell != null) DayRings(cell, s.today, rings(cell), minOf(maxWidth - 4.dp, 56.dp), onDay)
                         }
                     }
                 }
+            }
+            FlowLegend(legend)
+            note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            Text("Tap a day to see it.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun DayRings(cell: DayCell, today: LocalDate, rings: List<Ring>, size: Dp, onDay: (LocalDate) -> Unit) {
+    val future = cell.day > today
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = !future) { onDay(cell.day) }
+            .padding(vertical = 4.dp)
+            .alpha(if (future) 0.4f else 1f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val isToday = cell.day == today
+        Box(
+            Modifier.size(22.dp).clip(CircleShape)
+                .background(if (isToday) MaterialTheme.colorScheme.primary else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "${cell.day.dayOfMonth}",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (isToday || cell.perfect) FontWeight.Bold else FontWeight.Normal,
+                color = when {
+                    isToday -> MaterialTheme.colorScheme.onPrimary
+                    cell.perfect -> PERFECT_COLOR
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
+            )
+        }
+        StackedRings(rings = rings, size = size, hole = size * 0.1f, gap = 1.5.dp)
+    }
+}
+
+@Composable
+private fun FlowLegend(items: List<Pair<Color, String>>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
+        for ((color, label) in items) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+                Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 4.dp), maxLines = 1)
             }
         }
     }
