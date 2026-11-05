@@ -253,4 +253,80 @@ class HabitRepositoryTest {
         setTime(monday, 7, 0); repo.tickHabit(habit)
         assertEquals(10, today().dailyBonus) // the open task does not block the bonus
     }
+
+    // ---- History edits on closed days (replay) ----------------------------------------------------
+
+    @Test
+    fun `adding a missed session in History restores the streak and the points`() = runBlocking {
+        val id = newHabit()
+        val tue = monday.plusDays(1)
+        val wed = monday.plusDays(2)
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        setTime(wed, 7, 0); repo.tickHabit(id) // Tuesday missed: freeze, comeback +5 on Wednesday
+        assertEquals(15, habitToday(id).points)
+
+        setTime(monday.plusDays(3), 9, 0) // Thursday
+        repo.addSession(id, tue, LocalTime.of(7, 0), SessionSource.MANUAL)
+
+        assertEquals(10, db.sessions().getConfirmed(id, tue).single().points)
+        assertEquals(10, db.sessions().getConfirmed(id, wed).single().points) // no comeback any more
+        val streak = db.streaks().get(id)!!
+        assertEquals(3, streak.currentDays)
+        assertEquals(0, streak.freezesUsed)
+        assertFalse(streak.comebackPending)
+    }
+
+    @Test
+    fun `replay leaves points before the edited day alone`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        setTime(monday.plusDays(3), 9, 0)
+        repo.closePendingDays() // Monday is closed and final now
+        db.sessions().setPoints(db.sessions().getConfirmed(id, monday).single().id, 99, 0) // e.g. old config
+        repo.addSession(id, monday.plusDays(1), LocalTime.of(7, 0), SessionSource.MANUAL)
+        assertEquals(99, db.sessions().getConfirmed(id, monday).single().points)
+    }
+
+    @Test
+    fun `changing the time of a past session scores it again`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 21, 0); repo.tickHabit(id)
+        setTime(monday.plusDays(1), 9, 0)
+        val session = db.sessions().getConfirmed(id, monday).single()
+        assertEquals(3, session.points)
+        repo.editSessionStart(session.id, LocalTime.of(7, 0))
+        assertEquals(10, db.sessions().getConfirmed(id, monday).single().points)
+    }
+
+    @Test
+    fun `adding a past session can earn that day's daily bonus`() = runBlocking {
+        val a = newHabit("Meditate")
+        val b = newHabit("Read")
+        setTime(monday, 7, 0); repo.tickHabit(a)
+        setTime(monday.plusDays(1), 9, 0)
+        assertNull(db.dayBonus().observe(monday).first())
+        repo.addSession(b, monday, LocalTime.of(20, 0), SessionSource.MANUAL)
+        assertEquals(10, db.dayBonus().observe(monday).first()!!.points)
+    }
+
+    @Test
+    fun `a session cannot be added before the habit existed or in the future`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 9, 0)
+        repo.addSession(id, monday.minusDays(1), LocalTime.of(7, 0), SessionSource.MANUAL)
+        repo.addSession(id, monday.plusDays(1), LocalTime.of(7, 0), SessionSource.MANUAL)
+        assertTrue(db.sessions().getConfirmed(id, monday.minusDays(1)).isEmpty())
+        assertTrue(db.sessions().getConfirmed(id, monday.plusDays(1)).isEmpty())
+    }
+
+    @Test
+    fun `skip shows on Today and is still a miss`() = runBlocking {
+        val id = newHabit()
+        setTime(monday.plusDays(1), 10, 0)
+        repo.skipToday(id, promised = true)
+        assertTrue(habitToday(id).skip!!.promised)
+        setTime(monday.plusDays(2), 9, 0)
+        repo.closePendingDays()
+        assertTrue(db.streaks().get(id)!!.comebackPending)
+    }
 }

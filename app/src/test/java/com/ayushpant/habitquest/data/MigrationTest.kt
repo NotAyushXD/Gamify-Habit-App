@@ -76,4 +76,23 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 2 to 3 keeps tasks and adds settings, reminder log and skips`() = runBlocking {
+        createDatabaseAtVersion(2).apply {
+            execSQL(
+                "INSERT INTO task (id, name, due_date, base_points, created_date, points, active) " +
+                    "VALUES (1, 'Renew passport', '2026-11-07', 10, '2026-11-05', 0, 1)"
+            )
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            assertEquals("Renew passport", db.tasks().get(1)!!.name)
+            db.settings().put(Settings())
+            assertEquals(3, db.settings().get()!!.maxReminders)
+        } finally {
+            db.close()
+        }
+    }
 }

@@ -32,6 +32,10 @@ interface HabitDao {
     @Query("SELECT * FROM habit WHERE active = 1")
     suspend fun getActive(): List<Habit>
 
+    /** Deleted habits too, so History can still show their names. */
+    @Query("SELECT * FROM habit")
+    fun observeAll(): Flow<List<Habit>>
+
     @Query("SELECT * FROM habit WHERE id = :id")
     suspend fun get(id: Long): Habit?
 
@@ -56,6 +60,9 @@ interface SessionDao {
     @Query("SELECT * FROM session WHERE id = :id")
     suspend fun get(id: Long): Session?
 
+    @Query("SELECT * FROM session WHERE day BETWEEN :from AND :to AND status = 'CONFIRMED' ORDER BY day DESC, start_time")
+    fun observeConfirmedBetween(from: LocalDate, to: LocalDate): Flow<List<Session>>
+
     @Insert
     suspend fun insert(session: Session): Long
 
@@ -78,11 +85,64 @@ interface TaskDao {
     @Query("SELECT * FROM task WHERE id = :id")
     suspend fun get(id: Long): Task?
 
+    /** Tasks done in the range, and tasks due in the range (for Summary). Deleted ones excluded. */
+    @Query("SELECT * FROM task WHERE active = 1 AND ((done_day BETWEEN :from AND :to) OR (due_date BETWEEN :from AND :to)) ORDER BY done_day DESC")
+    fun observeDoneOrDueBetween(from: LocalDate, to: LocalDate): Flow<List<Task>>
+
+    /** All open tasks, soonest due first. */
+    @Query("SELECT * FROM task WHERE active = 1 AND done_day IS NULL ORDER BY due_date, id")
+    suspend fun getOpen(): List<Task>
+
+    @Query("SELECT * FROM task WHERE active = 1 AND done_day IS NULL ORDER BY due_date, id")
+    fun observeOpen(): Flow<List<Task>>
+
     @Insert
     suspend fun insert(task: Task): Long
 
     @Update
     suspend fun update(task: Task)
+}
+
+@Dao
+interface SettingsDao {
+    @Query("SELECT * FROM settings WHERE id = 1")
+    suspend fun get(): Settings?
+
+    @Query("SELECT * FROM settings WHERE id = 1")
+    fun observe(): Flow<Settings?>
+
+    @Upsert
+    suspend fun put(settings: Settings)
+}
+
+@Dao
+interface ReminderLogDao {
+    @Query("SELECT * FROM reminder_log WHERE day = :day")
+    suspend fun getForDay(day: LocalDate): List<ReminderLog>
+
+    @Query("SELECT * FROM reminder_log WHERE id = :id")
+    suspend fun get(id: Long): ReminderLog?
+
+    @Insert
+    suspend fun insert(row: ReminderLog): Long
+
+    @Update
+    suspend fun update(row: ReminderLog)
+}
+
+@Dao
+interface HabitSkipDao {
+    @Query("SELECT * FROM habit_skip WHERE day = :day")
+    suspend fun getForDay(day: LocalDate): List<HabitSkip>
+
+    @Query("SELECT * FROM habit_skip WHERE day BETWEEN :from AND :to")
+    fun observeBetween(from: LocalDate, to: LocalDate): Flow<List<HabitSkip>>
+
+    @Upsert
+    suspend fun put(skip: HabitSkip)
+
+    @Query("DELETE FROM habit_skip WHERE habit_id = :habitId AND day = :day")
+    suspend fun delete(habitId: Long, day: LocalDate)
 }
 
 @Dao
@@ -107,6 +167,9 @@ interface DayBonusDao {
 
     @Query("DELETE FROM day_bonus WHERE day = :day")
     suspend fun delete(day: LocalDate)
+
+    @Query("SELECT * FROM day_bonus WHERE day BETWEEN :from AND :to")
+    fun observeBetween(from: LocalDate, to: LocalDate): Flow<List<DayBonus>>
 }
 
 @Dao
@@ -136,10 +199,13 @@ class Converters {
 }
 
 @Database(
-    version = 2,
-    entities = [Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class],
-    // Room compares app/schemas/…/1.json with 2.json and writes the migration itself (here: add the task table).
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    version = 3,
+    entities = [
+        Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
+        Settings::class, ReminderLog::class, HabitSkip::class,
+    ],
+    // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -151,6 +217,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun signals(): SignalLogDao
     abstract fun appState(): AppStateDao
     abstract fun tasks(): TaskDao
+    abstract fun settings(): SettingsDao
+    abstract fun reminders(): ReminderLogDao
+    abstract fun skips(): HabitSkipDao
 
     companion object {
         fun create(context: Context): AppDatabase =

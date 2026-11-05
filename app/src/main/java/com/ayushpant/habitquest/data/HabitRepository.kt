@@ -33,6 +33,8 @@ data class HabitToday(
     val done: List<Session>,
     /** Streak including today, once today is done. */
     val streakDays: Int,
+    /** Set when the user chose "Skip today" or "Can't today". */
+    val skip: HabitSkip? = null,
 ) {
     val isDone get() = done.isNotEmpty()
     val points get() = done.sumOf { it.points }
@@ -59,6 +61,21 @@ data class TodayData(
     val totalPoints get() = habits.sumOf { it.points } + dailyBonus + tasks.filter { it.isDone }.sumOf { it.points }
 }
 
+/** Raw records for a date range. History and Summary build their views from it. */
+data class RangeData(
+    val from: LocalDate,
+    val to: LocalDate,
+    /** All habits, deleted ones too (for names). */
+    val habits: List<Habit>,
+    val sessions: List<Session>,
+    val bonuses: List<DayBonus>,
+    /** Tasks done or due in the range. */
+    val tasks: List<Task>,
+    val skips: List<HabitSkip>,
+    val openTasks: List<Task> = emptyList(),
+    val streaks: List<Streak> = emptyList(),
+)
+
 /**
  * The only class that changes the database. Screens and background tasks call it.
  *
@@ -69,8 +86,12 @@ class HabitRepository(
     private val db: AppDatabase,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val cfg: ScoringConfig = ScoringConfig.DEFAULT,
+    /** Called after every change, so reminders can be planned again. */
+    private val onChange: () -> Unit = {},
 ) {
     fun today(): LocalDate = LocalDate.now(clock)
+
+    fun now(): Long = clock.millis()
 
     fun localTimeOf(epochMillis: Long): LocalTime =
         Instant.ofEpochMilli(epochMillis).atZone(clock.zone).toLocalTime()
@@ -111,6 +132,9 @@ class HabitRepository(
                 }
                 .sortedBy { it.isDone },
         )
+    }.combine(db.skips().observeBetween(day, day)) { data, skips ->
+        val byHabit = skips.associateBy { it.habitId }
+        data.copy(habits = data.habits.map { it.copy(skip = byHabit[it.habit.id]) })
     }
 
     suspend fun getHabit(id: Long): Habit? = db.habits().get(id)
@@ -130,7 +154,7 @@ class HabitRepository(
             }
             rescoreDay(today()) // the window or base points can change today's points
             id
-        }
+        }.also { onChange() }
     }
 
     /** Soft delete: the habit disappears, but its sessions and points stay. */
@@ -141,6 +165,7 @@ class HabitRepository(
             db.habits().update(habit.copy(active = false))
             rescoreDay(today())
         }
+        onChange()
     }
 
     // ---- Tasks (one-off, with a due date) -------------------------------------------------------
@@ -156,7 +181,7 @@ class HabitRepository(
             val points = clean.doneDay?.let { taskPoints(clean.basePoints, clean.dueDate, it, cfg) } ?: 0
             db.tasks().update(clean.copy(points = points))
             clean.id
-        }
+        }.also { onChange() }
     }
 
     /** Tick: the task is done today. */
@@ -167,24 +192,27 @@ class HabitRepository(
         db.tasks().update(
             t.copy(doneDay = day, doneAt = clock.millis(), points = taskPoints(t.basePoints, t.dueDate, day, cfg))
         )
+        onChange()
     }
 
     /** "Not done": the task is open again and its points are removed. */
     suspend fun reopenTask(id: Long) {
         val t = db.tasks().get(id) ?: return
         db.tasks().update(t.copy(doneDay = null, doneAt = null, points = 0))
+        onChange()
     }
 
     /** Soft delete: the task disappears, but points it already got stay. */
     suspend fun deleteTask(id: Long) {
         val t = db.tasks().get(id) ?: return
         db.tasks().update(t.copy(active = false))
+        onChange()
     }
 
     // ---- Sessions (manual habits) --------------------------------------------------------------
 
     /** "Start": records the start time. The session counts only after "Done". */
-    suspend fun startSession(habitId: Long) = changeToday {
+    suspend fun startSession(habitId: Long) = changeDay(today()) {
         val now = clock.millis()
         val open = db.sessions().getForDay(today())
             .any { it.habitId == habitId && it.status == SessionStatus.SUGGESTED && it.endTime == null }
@@ -199,44 +227,82 @@ class HabitRepository(
     }
 
     /** "Done" on a started session. This tap is the user's confirmation. */
-    suspend fun finishSession(sessionId: Long) = changeToday {
-        val s = db.sessions().get(sessionId) ?: return@changeToday
+    suspend fun finishSession(sessionId: Long) = changeDay(today()) {
+        val s = db.sessions().get(sessionId) ?: return@changeDay
         db.sessions().update(s.copy(endTime = clock.millis(), status = SessionStatus.CONFIRMED))
     }
 
     /** Tick: the user says "I did it", now. They can change the time afterwards. */
-    suspend fun tickHabit(habitId: Long) = changeToday {
+    suspend fun tickHabit(habitId: Long, source: SessionSource = SessionSource.MANUAL) = changeDay(today()) {
         val now = clock.millis()
         db.sessions().insert(
             Session(
                 habitId = habitId, day = today(), startTime = now, endTime = now,
-                status = SessionStatus.CONFIRMED, source = SessionSource.MANUAL, evidenceFound = false,
+                status = SessionStatus.CONFIRMED, source = source, evidenceFound = false,
             )
         )
     }
 
+    /**
+     * Adds a confirmed session at [time] on [day]: a missed session added in History, or a tick
+     * in the 11 PM checklist. A past day replays the habit's streak from that day on.
+     */
+    suspend fun addSession(habitId: Long, day: LocalDate, time: LocalTime, source: SessionSource) {
+        val habit = db.habits().get(habitId) ?: return
+        if (day < habit.createdDate || day > today()) return
+        changeDay(day, habitId) {
+            val start = minOf(millisOf(day, time), clock.millis())
+            db.sessions().insert(
+                Session(
+                    habitId = habitId, day = day, startTime = start, endTime = start,
+                    status = SessionStatus.CONFIRMED, source = source, evidenceFound = false,
+                )
+            )
+        }
+    }
+
     /** Changes the start time of a session on its own day. The end time moves with it. */
-    suspend fun editSessionStart(sessionId: Long, newStart: LocalTime) = changeToday {
-        val s = db.sessions().get(sessionId) ?: return@changeToday
-        val startMillis = minOf(
-            s.day.atTime(newStart).atZone(clock.zone).toInstant().toEpochMilli(),
-            clock.millis(), // a session cannot start in the future
-        )
-        val duration = s.endTime?.let { it - s.startTime }
-        db.sessions().update(s.copy(startTime = startMillis, endTime = duration?.let { startMillis + it }))
+    suspend fun editSessionStart(sessionId: Long, newStart: LocalTime) {
+        val s = db.sessions().get(sessionId) ?: return
+        changeDay(s.day, s.habitId) {
+            val startMillis = minOf(millisOf(s.day, newStart), clock.millis()) // never in the future
+            val duration = s.endTime?.let { it - s.startTime }
+            db.sessions().update(s.copy(startTime = startMillis, endTime = duration?.let { startMillis + it }))
+        }
     }
 
     /** Removes a session (a mistaken tick, or a started session the user cancels). */
-    suspend fun removeSession(sessionId: Long) = changeToday {
-        db.sessions().delete(sessionId)
+    suspend fun removeSession(sessionId: Long) {
+        val s = db.sessions().get(sessionId) ?: return
+        changeDay(s.day, s.habitId) { db.sessions().delete(sessionId) }
     }
 
-    private suspend fun changeToday(block: suspend () -> Unit) {
+    /** "Skip today" / "Can't today". Stops today's reminders for the habit. It is still a miss. */
+    suspend fun skipToday(habitId: Long, promised: Boolean) {
+        db.skips().put(HabitSkip(habitId, today(), promised, clock.millis()))
+        onChange()
+    }
+
+    suspend fun undoSkip(habitId: Long, day: LocalDate) {
+        db.skips().delete(habitId, day)
+        onChange()
+    }
+
+    suspend fun skipsOn(day: LocalDate): List<HabitSkip> = db.skips().getForDay(day)
+
+    private fun millisOf(day: LocalDate, time: LocalTime) = day.atTime(time).atZone(clock.zone).toInstant().toEpochMilli()
+
+    /**
+     * Runs [block], then fixes the points. For today (an open day) that is a rescore. For a closed
+     * day the habit's streak is replayed from [day], because every later day depends on it.
+     */
+    private suspend fun changeDay(day: LocalDate, habitId: Long? = null, block: suspend () -> Unit) {
         closePendingDays() // the streak must be up to date before today is scored
         db.withTransaction {
             block()
-            rescoreDay(today())
+            if (day >= today() || habitId == null) rescoreDay(today()) else replayHabit(habitId, day)
         }
+        onChange()
     }
 
     // ---- Scoring -------------------------------------------------------------------------------
@@ -247,23 +313,76 @@ class HabitRepository(
      * streak state after the previous day.
      */
     private suspend fun rescoreDay(day: LocalDate) {
-        val habits = db.habits().getActive().filter { it.createdDate <= day }
-        val doneIds = mutableSetOf<Long>()
-        for (habit in habits) {
-            val confirmed = db.sessions().getConfirmed(habit.id, day)
-            if (confirmed.isNotEmpty()) doneIds += habit.id
-            val scores = scoreHabitDay(
-                habit = HabitRules(habit.basePoints, habit.windowStart, habit.windowEnd),
-                closedStreak = (db.streaks().get(habit.id) ?: Streak(habit.id)).toState(),
-                confirmed = confirmed.map { SessionInput(it.id, localTimeOf(it.startTime), it.evidenceFound) },
-                cfg = cfg,
-            )
-            for ((id, score) in scores) db.sessions().setPoints(id, score.points, score.bonusPoints)
+        for (habit in db.habits().getActive().filter { it.createdDate <= day }) {
+            rescoreHabitDay(habit, day, (db.streaks().get(habit.id) ?: Streak(habit.id)).toState())
         }
+        updateDayBonus(day)
+    }
+
+    /** Scores one habit's confirmed sessions on [day], given the streak after the day before. */
+    private suspend fun rescoreHabitDay(habit: Habit, day: LocalDate, closedStreak: StreakState) {
+        val scores = scoreHabitDay(
+            habit = HabitRules(habit.basePoints, habit.windowStart, habit.windowEnd),
+            closedStreak = closedStreak,
+            confirmed = db.sessions().getConfirmed(habit.id, day)
+                .map { SessionInput(it.id, localTimeOf(it.startTime), it.evidenceFound) },
+            cfg = cfg,
+        )
+        for ((id, score) in scores) db.sessions().setPoints(id, score.points, score.bonusPoints)
+    }
+
+    private suspend fun updateDayBonus(day: LocalDate) {
+        val habits = db.habits().getActive().filter { it.createdDate <= day }
         val scheduledIds = habits.filter { isScheduledOn(it.daysMask, day) }.map { it.id }.toSet()
+        val doneIds = habits.filter { db.sessions().getConfirmed(it.id, day).isNotEmpty() }.map { it.id }.toSet()
         val bonus = dailyBonus(scheduledIds, doneIds, cfg)
         if (bonus > 0) db.dayBonus().upsert(DayBonus(day, bonus)) else db.dayBonus().delete(day)
     }
+
+    /**
+     * After a change on a closed day: walks the habit's streak from its creation day. Days before
+     * [fromDay] only update the streak (their points stay as they are); [fromDay] and later days
+     * are scored again, then today. Daily bonuses from [fromDay] on are checked again.
+     */
+    private suspend fun replayHabit(habitId: Long, fromDay: LocalDate) {
+        val habit = db.habits().get(habitId) ?: return
+        val lastClosed = db.appState().get(KEY_LAST_CLOSED)?.let(LocalDate::parse) ?: today().minusDays(1)
+        var state = StreakState()
+        var day = habit.createdDate
+        while (day <= lastClosed) {
+            if (day >= fromDay) rescoreHabitDay(habit, day, state)
+            val outcome = dayOutcome(
+                done = db.sessions().getConfirmed(habit.id, day).isNotEmpty(),
+                scheduled = isScheduledOn(habit.daysMask, day),
+                isCreationDay = habit.createdDate == day,
+            )
+            state = closeDay(state, day, outcome, cfg)
+            day = day.plusDays(1)
+        }
+        db.streaks().upsert(state.toEntity(habit.id))
+        rescoreHabitDay(habit, today(), state)
+        var d = fromDay
+        while (d <= today()) {
+            updateDayBonus(d)
+            d = d.plusDays(1)
+        }
+    }
+
+    // ---- History and Summary -------------------------------------------------------------------
+
+    /** Everything recorded between [from] and [to], for the History and Summary screens. */
+    fun observeRange(from: LocalDate, to: LocalDate): Flow<RangeData> = combine(
+        db.habits().observeAll(),
+        db.sessions().observeConfirmedBetween(from, to),
+        db.dayBonus().observeBetween(from, to),
+        db.tasks().observeDoneOrDueBetween(from, to),
+        db.skips().observeBetween(from, to),
+    ) { habits, sessions, bonuses, tasks, skips ->
+        RangeData(from, to, habits, sessions, bonuses, tasks, skips)
+    }.combine(db.tasks().observeOpen()) { data, open -> data.copy(openTasks = open) }
+        .combine(db.streaks().observeAll()) { data, streaks -> data.copy(streaks = streaks) }
+
+    suspend fun lastClosedDay(): LocalDate? = db.appState().get(KEY_LAST_CLOSED)?.let(LocalDate::parse)
 
     // ---- Day close (spec 6.3) ------------------------------------------------------------------
 

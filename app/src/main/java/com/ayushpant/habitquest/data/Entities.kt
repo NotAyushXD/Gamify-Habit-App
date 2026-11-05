@@ -114,3 +114,51 @@ data class Task(
     val points: Int = 0,
     val active: Boolean = true,
 )
+
+// ---- Added in database version 3 (Step 2: popups) ---------------------------------------------
+
+/** User settings (spec 10). One row, id = 1. Quiet hours can cross midnight, e.g. 23:30–06:00. */
+@Entity(tableName = "settings")
+data class Settings(
+    @PrimaryKey val id: Int = 1,
+    @ColumnInfo(name = "quiet_enabled") val quietEnabled: Boolean = true,
+    @ColumnInfo(name = "quiet_start") val quietStart: LocalTime = LocalTime.of(23, 30),
+    @ColumnInfo(name = "quiet_end") val quietEnd: LocalTime = LocalTime.of(6, 0),
+    @ColumnInfo(name = "checklist_enabled") val checklistEnabled: Boolean = true,
+    @ColumnInfo(name = "max_reminders") val maxReminders: Int = 3,
+)
+
+enum class ReminderKind { START, LAST_CHANCE, SNOOZE, CHECKLIST }
+
+enum class ReminderResult {
+    /** A snooze waiting for its time. */
+    PENDING,
+    SHOWN, STARTED, DONE, SNOOZED, SKIPPED, PROMISED, CLOSED,
+    /** Not shown: quiet hours, the daily limit, or too late. */
+    SUPPRESSED,
+}
+
+/** One reminder or checklist popup: when it was due and what the user did. */
+@Entity(tableName = "reminder_log", indices = [Index("day")])
+data class ReminderLog(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Null for the checklist. */
+    @ColumnInfo(name = "habit_id") val habitId: Long?,
+    val day: LocalDate,
+    val kind: ReminderKind,
+    /** Epoch milliseconds. */
+    @ColumnInfo(name = "due_at") val dueAt: Long,
+    /** Epoch milliseconds. */
+    @ColumnInfo(name = "shown_at") val shownAt: Long? = null,
+    val result: ReminderResult,
+)
+
+/** "Skip today" or "Can't today, I promise tomorrow". The day still counts as a miss. */
+@Entity(tableName = "habit_skip", primaryKeys = ["habit_id", "day"])
+data class HabitSkip(
+    @ColumnInfo(name = "habit_id") val habitId: Long,
+    val day: LocalDate,
+    val promised: Boolean,
+    /** Epoch milliseconds. */
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
