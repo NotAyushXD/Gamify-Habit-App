@@ -33,7 +33,7 @@ class MainActivity : ComponentActivity() {
                         val vm: TodayViewModel = viewModel(factory = viewModelFactory { initializer { TodayViewModel(repo) } })
                         TodayScreen(
                             vm = vm,
-                            onAdd = { nav.navigate("habit/0") },
+                            onAdd = { kind -> nav.navigate(if (kind == ItemKind.TASK) "task/0" else "habit/0") },
                             onEditHabit = { id -> nav.navigate("habit/$id") },
                             onEditTask = { id -> nav.navigate("task/$id") },
                         )

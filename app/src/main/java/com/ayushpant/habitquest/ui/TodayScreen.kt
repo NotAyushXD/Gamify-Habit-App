@@ -28,14 +28,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,11 +111,14 @@ private val DUE_DAY = DateTimeFormatter.ofPattern("EEE d MMM")
 @Composable
 fun TodayScreen(
     vm: TodayViewModel,
-    onAdd: () -> Unit,
+    onAdd: (ItemKind) -> Unit,
     onEditHabit: (Long) -> Unit,
     onEditTask: (Long) -> Unit,
 ) {
     val data by vm.state.collectAsStateWithLifecycle()
+    // rememberSaveable: the chosen tab survives rotation and coming back from the editor.
+    var tab by rememberSaveable { mutableIntStateOf(ItemKind.HABIT.ordinal) }
+    val kind = ItemKind.entries[tab]
     var editing by remember { mutableStateOf<Session?>(null) }
     var reopening by remember { mutableStateOf<TaskToday?>(null) }
 
@@ -130,47 +137,34 @@ fun TodayScreen(
             })
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAdd) { Icon(Icons.Default.Add, contentDescription = "Add habit or task") }
+            FloatingActionButton(onClick = { onAdd(kind) }) {
+                Icon(Icons.Default.Add, contentDescription = if (kind == ItemKind.HABIT) "Add habit" else "Add task")
+            }
         },
     ) { padding ->
         val today = data ?: return@Scaffold
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item { SummaryCard(today) }
-            if (today.habits.isEmpty() && today.tasks.isEmpty()) {
-                item {
-                    Text(
-                        "Nothing here yet. Tap + to add a habit or a task.",
-                        modifier = Modifier.padding(top = 32.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
-            }
-            items(today.habits, key = { it.habit.id }) { h ->
-                HabitTile(
-                    h = h,
-                    timeOf = vm::timeOf,
-                    onStart = { vm.start(h.habit.id) },
-                    onFinish = { s -> vm.finish(s.id) },
-                    onCancel = { s -> vm.remove(s.id) },
-                    onTick = { vm.tick(h.habit.id) },
-                    onOpenDone = { s -> editing = s },
-                    onEdit = { onEditHabit(h.habit.id) },
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { SummaryCard(today) }
+            PrimaryTabRow(selectedTabIndex = tab) {
+                val scheduled = today.habits.count { it.scheduledToday }
+                val doneScheduled = today.habits.count { it.scheduledToday && it.isDone }
+                Tab(
+                    selected = kind == ItemKind.HABIT,
+                    onClick = { tab = ItemKind.HABIT.ordinal },
+                    text = { Text("Habits  $doneScheduled/$scheduled") },
+                )
+                Tab(
+                    selected = kind == ItemKind.TASK,
+                    onClick = { tab = ItemKind.TASK.ordinal },
+                    text = { Text("Tasks  ${today.tasks.count { !it.isDone }} open") },
                 )
             }
-            if (today.tasks.isNotEmpty()) {
-                item {
-                    Text("Tasks", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-                }
-            }
-            items(today.tasks, key = { "task-${it.task.id}" }) { t ->
-                TaskTile(
-                    t = t,
-                    onTick = { if (t.isDone) reopening = t else vm.completeTask(t.task.id) },
-                    onEdit = { onEditTask(t.task.id) },
+            when (kind) {
+                ItemKind.HABIT -> HabitList(today, vm, onOpenDone = { editing = it }, onEditHabit = onEditHabit)
+                ItemKind.TASK -> TaskList(
+                    today,
+                    onTick = { t -> if (t.isDone) reopening = t else vm.completeTask(t.task.id) },
+                    onEditTask = onEditTask,
                 )
             }
         }
@@ -194,6 +188,48 @@ fun TodayScreen(
             onRemove = { vm.remove(s.id); editing = null },
             onDismiss = { editing = null },
         )
+    }
+}
+
+/** List padding: room at the bottom so the + button never covers the last tile. */
+private val LIST_PADDING = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 88.dp)
+
+@Composable
+private fun EmptyText(text: String) {
+    Text(text, modifier = Modifier.padding(16.dp).padding(top = 16.dp), style = MaterialTheme.typography.bodyLarge)
+}
+
+@Composable
+private fun HabitList(
+    today: TodayData,
+    vm: TodayViewModel,
+    onOpenDone: (Session) -> Unit,
+    onEditHabit: (Long) -> Unit,
+) {
+    if (today.habits.isEmpty()) return EmptyText("No habits yet. Tap + to add your first habit.")
+    LazyColumn(contentPadding = LIST_PADDING, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(today.habits, key = { it.habit.id }) { h ->
+            HabitTile(
+                h = h,
+                timeOf = vm::timeOf,
+                onStart = { vm.start(h.habit.id) },
+                onFinish = { s -> vm.finish(s.id) },
+                onCancel = { s -> vm.remove(s.id) },
+                onTick = { vm.tick(h.habit.id) },
+                onOpenDone = onOpenDone,
+                onEdit = { onEditHabit(h.habit.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TaskList(today: TodayData, onTick: (TaskToday) -> Unit, onEditTask: (Long) -> Unit) {
+    if (today.tasks.isEmpty()) return EmptyText("No open tasks. Tap + to add one.")
+    LazyColumn(contentPadding = LIST_PADDING, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(today.tasks, key = { it.task.id }) { t ->
+            TaskTile(t = t, onTick = { onTick(t) }, onEdit = { onEditTask(t.task.id) })
+        }
     }
 }
 
