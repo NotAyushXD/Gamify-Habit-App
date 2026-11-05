@@ -289,6 +289,8 @@ private fun HabitTile(
                         "Done at ${timeOf(firstDone).format(HHMM)}  ·  +${h.points}$bonus"
                     }
                     h.inProgress != null -> "In progress since ${timeOf(h.inProgress).format(HHMM)}"
+                    h.skip?.promised == true -> "Skipped today · you promised tomorrow"
+                    h.skip != null -> "Skipped today"
                     !h.scheduledToday -> "Not scheduled today"
                     else -> "Not done — tap to start"
                 }
@@ -345,9 +347,9 @@ private fun TaskTile(t: TaskToday, onTick: () -> Unit, onEdit: () -> Unit) {
 
 private fun dayCount(days: Long) = if (days == 1L) "1 day" else "$days days"
 
-/** Opens for a done habit: fix the time, or remove a mistaken tick. */
+/** Opens for a done habit: fix the time, or remove a mistaken tick. Also used by History. */
 @Composable
-private fun SessionDialog(
+internal fun SessionDialog(
     session: Session,
     start: LocalTime,
     onChangeStart: (LocalTime) -> Unit,

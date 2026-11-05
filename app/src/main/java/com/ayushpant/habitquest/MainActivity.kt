@@ -4,49 +4,122 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ayushpant.habitquest.ui.EditorScreen
 import com.ayushpant.habitquest.ui.HabitQuestTheme
+import com.ayushpant.habitquest.ui.HistoryScreen
+import com.ayushpant.habitquest.ui.HistoryViewModel
 import com.ayushpant.habitquest.ui.ItemKind
+import com.ayushpant.habitquest.ui.SettingsScreen
+import com.ayushpant.habitquest.ui.SummaryScreen
+import com.ayushpant.habitquest.ui.SummaryViewModel
 import com.ayushpant.habitquest.ui.TodayScreen
 import com.ayushpant.habitquest.ui.TodayViewModel
+
+/** A screen in the bottom navigation bar. */
+private data class Tab(val route: String, val label: String, val icon: ImageVector)
+
+private val TABS = listOf(
+    Tab("today", "Today", Icons.Default.Home),
+    Tab("history", "History", Icons.Default.DateRange),
+    Tab("summary", "Summary", Icons.Default.Star),
+    Tab("settings", "Settings", Icons.Default.Settings),
+)
 
 /** The app's single window. Screens are switched inside it by the NavHost below. */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val repo = (application as HabitQuestApp).repository
+        val app = application as HabitQuestApp
+        val repo = app.repository
 
         setContent {
             HabitQuestTheme {
                 val nav = rememberNavController()
-                NavHost(navController = nav, startDestination = "today") {
-                    composable("today") {
-                        val vm: TodayViewModel = viewModel(factory = viewModelFactory { initializer { TodayViewModel(repo) } })
-                        TodayScreen(
-                            vm = vm,
-                            onAdd = { kind -> nav.navigate(if (kind == ItemKind.TASK) "task/0" else "habit/0") },
-                            onEditHabit = { id -> nav.navigate("habit/$id") },
-                            onEditTask = { id -> nav.navigate("task/$id") },
-                        )
-                    }
-                    // id 0 = new item; the editor then shows the Habit | Task switch.
-                    for ((route, kind) in listOf("habit" to ItemKind.HABIT, "task" to ItemKind.TASK)) {
-                        composable("$route/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                            EditorScreen(
-                                repo = repo,
-                                initialKind = kind,
-                                id = entry.arguments?.getLong("id") ?: 0L,
-                                onDone = { nav.popBackStack() },
+                val entry by nav.currentBackStackEntryAsState()
+                val route = entry?.destination?.route
+
+                Scaffold(
+                    bottomBar = {
+                        // Hidden in the editor, shown on the four main screens.
+                        if (TABS.any { it.route == route }) {
+                            NavigationBar {
+                                for (tab in TABS) {
+                                    NavigationBarItem(
+                                        selected = route == tab.route,
+                                        onClick = {
+                                            nav.navigate(tab.route) {
+                                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                                launchSingleTop = true
+                                                restoreState = true
+                                            }
+                                        },
+                                        icon = { Icon(tab.icon, contentDescription = null) },
+                                        label = { Text(tab.label) },
+                                    )
+                                }
+                            }
+                        }
+                    },
+                ) { inner ->
+                    NavHost(
+                        navController = nav,
+                        startDestination = "today",
+                        modifier = Modifier.padding(inner).consumeWindowInsets(inner),
+                    ) {
+                        composable("today") {
+                            val vm: TodayViewModel = viewModel(factory = viewModelFactory { initializer { TodayViewModel(repo) } })
+                            TodayScreen(
+                                vm = vm,
+                                onAdd = { kind -> nav.navigate(if (kind == ItemKind.TASK) "task/0" else "habit/0") },
+                                onEditHabit = { id -> nav.navigate("habit/$id") },
+                                onEditTask = { id -> nav.navigate("task/$id") },
                             )
+                        }
+                        composable("history") {
+                            val vm: HistoryViewModel = viewModel(factory = viewModelFactory { initializer { HistoryViewModel(repo) } })
+                            HistoryScreen(vm)
+                        }
+                        composable("summary") {
+                            val vm: SummaryViewModel = viewModel(factory = viewModelFactory { initializer { SummaryViewModel(repo) } })
+                            SummaryScreen(vm)
+                        }
+                        composable("settings") { SettingsScreen(app.reminders) }
+                        // id 0 = new item; the editor then shows the Habit | Task switch.
+                        for ((r, kind) in listOf("habit" to ItemKind.HABIT, "task" to ItemKind.TASK)) {
+                            composable("$r/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { e ->
+                                EditorScreen(
+                                    repo = repo,
+                                    initialKind = kind,
+                                    id = e.arguments?.getLong("id") ?: 0L,
+                                    onDone = { nav.popBackStack() },
+                                )
+                            }
                         }
                     }
                 }
