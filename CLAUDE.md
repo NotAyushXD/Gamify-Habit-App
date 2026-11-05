@@ -43,6 +43,20 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 | Today's points | XP and coins are added in Step 5. Until then, the Today screen shows "points today". |
 | Tasks (added after Step 1) | One-off item with a due date, own `task` table (DB v2). Chosen with a Habit/Task switch when creating. Stays on Today until done; marked overdue, no penalty for being open. Points = base × 1.2 if done by the due date; late: 1+ days ×0.8, 3+ ×0.6, 7+ ×0.4, 14+ ×0.2 (never 0). No streak, no window, not part of the daily bonus. Values in `ScoringConfig`. |
 
+## Decisions made after the spec (Step 2)
+
+| Topic | Decision |
+| --- | --- |
+| Reminders | Window start, plus a "last chance" reminder 15 min before the window ends. Snooze 15 min. All count toward the per-habit daily limit (default 3, Settings 1–5). If several are due together (phone was off), only the most urgent shows; expired ones are suppressed. Timings in `reminders/ReminderConfig.kt`. |
+| "Can't today" | On the last-chance popup only. Kind message + 5 s wait before "I promise: tomorrow". Records a skip with `promised = true`; the habit's first reminder the next day says "Yesterday you promised…". A skip is still a miss for streaks. |
+| Tasks on popups | The first habit reminder popup of the day lists the top 3 open tasks (soonest due). The 11 PM checklist lists open habits and open tasks due today or earlier. |
+| Checklist tick | Creates a CHECKLIST session timed at the window start (generous: full timing points). No checklist popup if nothing is open. |
+| Quiet hours | Default 23:30–06:00, can cross midnight. Popups due in quiet hours are suppressed, not delayed. |
+| Popup rules not yet done | Navigation detection needs the notification listener (Step 3). Calls: AudioManager mode, retry every 60 s. |
+| History | Edit time, mark not done, or add a missed session on any day since the habit was created. A closed-day edit replays that habit's streak from its creation; only days from the edited day on are rescored (earlier points stay). Daily bonuses from that day on are rechecked. |
+| Summary | Day/Week/Month. Habit consistency = done scheduled habit-days ÷ scheduled habit-days (today counts only once done; creation day not a miss). Unscheduled done days shown as "extra". Tasks: on-time share of tasks due in the period, completed, average days late, open/overdue now. |
+| Popup host | Overlay `ComposeView` in a `specialUse` foreground service (`PopupService`), started from an exact-alarm receiver. Without the overlay permission: a notification that opens `PopupActivity`. |
+
 ## Code rules
 
 - Kotlin + Jetpack Compose, minSdk 29 (Android 10). Package `com.ayushpant.habitquest`.
