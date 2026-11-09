@@ -73,6 +73,7 @@ fun SettingsScreen(
     onZones: () -> Unit = {},
     /** A permission may have changed: register zones and alarms again. */
     onPermissionsChanged: () -> Unit = {},
+    onShowWelcome: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -224,6 +225,7 @@ fun SettingsScreen(
                 }
             }
 
+            OutlinedButton(onClick = onShowWelcome, modifier = Modifier.fillMaxWidth()) { Text("Show the welcome tour again") }
             Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
         }
     }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.ayushpant.habitquest"
         minSdk = 29 // Android 10 (spec section 4)
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.9.0-step4"
+        versionCode = 10
+        versionName = "0.10.0"
     }
 
     // Release key for APKs shared with friends. The key and passwords live outside the project,

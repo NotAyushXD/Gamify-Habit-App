@@ -32,6 +32,8 @@ import androidx.navigation.navArgument
 import com.ayushpant.habitquest.detect.CatchUp
 import com.ayushpant.habitquest.data.HabitType
 import com.ayushpant.habitquest.ui.EditorScreen
+import com.ayushpant.habitquest.ui.Welcome
+import com.ayushpant.habitquest.ui.WelcomeScreen
 import com.ayushpant.habitquest.ui.ZonesScreen
 import kotlinx.coroutines.launch
 import com.ayushpant.habitquest.ui.HabitQuestTheme
@@ -100,7 +102,8 @@ class MainActivity : ComponentActivity() {
                 ) { inner ->
                     NavHost(
                         navController = nav,
-                        startDestination = "today",
+                        // First open: the welcome tour, then Today.
+                        startDestination = if (Welcome.seen(this@MainActivity)) "today" else "welcome",
                         modifier = Modifier.padding(inner).consumeWindowInsets(inner),
                     ) {
                         composable("today") {
@@ -120,6 +123,13 @@ class MainActivity : ComponentActivity() {
                             val vm: SummaryViewModel = viewModel(factory = viewModelFactory { initializer { SummaryViewModel(repo) } })
                             SummaryScreen(vm)
                         }
+                        composable("welcome") {
+                            WelcomeScreen { addHabit ->
+                                Welcome.markSeen(this@MainActivity)
+                                nav.navigate("today") { popUpTo("welcome") { inclusive = true } }
+                                if (addHabit) nav.navigate("habit/0")
+                            }
+                        }
                         composable("zones") { ZonesScreen(repo, onBack = { nav.popBackStack() }) }
                         composable("settings") {
                             SettingsScreen(
@@ -127,6 +137,7 @@ class MainActivity : ComponentActivity() {
                                 onLinkHabit = { id, type -> nav.navigate("habit/$id?type=${type.name}") },
                                 onZones = { nav.navigate("zones") },
                                 onPermissionsChanged = { app.rescheduleReminders() },
+                                onShowWelcome = { nav.navigate("welcome") },
                             )
                         }
                         // id 0 = new item; the editor then shows the Habit | Task switch.

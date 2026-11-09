@@ -126,6 +126,16 @@ class SummaryRenderTest {
     }
 
     @Test
+    fun renderWelcome() {
+        compose.setContent { HabitQuestTheme { WelcomeScreen {} } }
+        compose.mainClock.advanceTimeBy(500)
+        save(File("build/render").apply { mkdirs() }, "welcome-1.png")
+        compose.onNodeWithText("Next").performClick()
+        compose.mainClock.advanceTimeBy(1_500)
+        save(File("build/render"), "welcome-2.png")
+    }
+
+    @Test
     fun renderPromise() {
         val out = File("build/render").apply { mkdirs() }
         val ctx = PromiseContext(logId = 1, habitId = 1, habitName = "Meditate", suggestedTime = LocalTime.of(7, 0), priorMisses = 2, oathRequired = true)
