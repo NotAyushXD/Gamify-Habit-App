@@ -68,7 +68,7 @@ enum class ItemKind { HABIT, TASK }
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone: () -> Unit) {
+fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone: () -> Unit, startWithApp: Boolean = false) {
     val cfg = ScoringConfig.DEFAULT
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -85,7 +85,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     var windowEnd by remember { mutableStateOf(LocalTime.of(8, 0)) }
     var daysMask by remember { mutableStateOf(EVERY_DAY_MASK) }
     // App habit (Step 3): opens and watches an app, e.g. a meditation app.
-    var habitType by remember { mutableStateOf(HabitType.MANUAL) }
+    var habitType by remember { mutableStateOf(if (startWithApp) HabitType.APP else HabitType.MANUAL) }
     var sourcePackage by remember { mutableStateOf<String?>(null) }
     var pickingApp by remember { mutableStateOf(false) }
 
@@ -106,7 +106,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 windowStart = h.windowStart
                 windowEnd = h.windowEnd
                 daysMask = h.daysMask
-                habitType = if (h.type == HabitType.APP) HabitType.APP else HabitType.MANUAL
+                habitType = if (h.type == HabitType.APP || startWithApp) HabitType.APP else HabitType.MANUAL
                 sourcePackage = h.sourcePackage
                 dims = dimensionsOf(h.mbsMask)
                 dimsTouched = h.mbsMask != 0

@@ -15,6 +15,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -60,7 +64,7 @@ private val HHMM = DateTimeFormatter.ofPattern("HH:mm")
 /** Settings (spec 9, 11): permission status, quiet hours, checklist, reminder limit. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(reminders: ReminderRepository) {
+fun SettingsScreen(reminders: ReminderRepository, onLinkHabit: (habitId: Long) -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by reminders.observeSettings().collectAsStateWithLifecycle(initialValue = null)
@@ -128,7 +132,7 @@ fun SettingsScreen(reminders: ReminderRepository) {
                     granted = listener,
                     action = "Open setting",
                 ) {
-                    context.startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    openNotificationAccess(context)
                 }
                 PermissionRow(
                     title = "Exact alarms",
@@ -148,7 +152,7 @@ fun SettingsScreen(reminders: ReminderRepository) {
             }
 
             Section("Track a habit with an app") {
-                AppHabitGuide(reminders, notificationAccess = listener, popups = overlay)
+                AppHabitGuide(reminders, notificationAccess = listener, popups = overlay, onLinkHabit = onLinkHabit)
             }
 
             val s = settings ?: return@Column
@@ -206,24 +210,72 @@ fun SettingsScreen(reminders: ReminderRepository) {
  * audio: Medito, Headspace, Calm, Insight Timer, a podcast or music app, …
  */
 @Composable
-private fun AppHabitGuide(reminders: ReminderRepository, notificationAccess: Boolean, popups: Boolean) {
+private fun AppHabitGuide(
+    reminders: ReminderRepository,
+    notificationAccess: Boolean,
+    popups: Boolean,
+    onLinkHabit: (Long) -> Unit,
+) {
     val context = LocalContext.current
     val appHabits by reminders.observeAppHabits().collectAsStateWithLifecycle(initialValue = emptyList())
+    val allHabits by reminders.observeActiveHabits().collectAsStateWithLifecycle(initialValue = emptyList())
+    var choosing by remember { mutableStateOf(false) }
     Text(
         "Habit Quest can notice when you use an app for a habit, for example a meditation app, " +
             "and ask you to confirm the session. Nothing is checked off without your tap.",
         style = MaterialTheme.typography.bodyMedium,
     )
-    GuideStep(1, notificationAccess, "Allow Notification access (above).",
-        "It lets Habit Quest see when an app starts and stops playing audio. It does not read your notifications.")
-    GuideStep(2, appHabits.isNotEmpty(), "Link the habit to its app.",
-        if (appHabits.isEmpty()) "Today → tap ✏️ on the habit (or + for a new one) → \"How do you do it?\" → With an app → Choose the app."
-        else appHabits.joinToString("\n") { "${it.name} → ${appLabel(context, it.sourcePackage!!) ?: it.sourcePackage}" })
-    GuideStep(3, popups, "Allow Display over other apps (above).",
-        "So the \"Did you do it?\" question can appear over the app. Without it, it comes as a notification.")
-    GuideStep(4, null, "Use the app as usual.",
+    GuideStep(1, notificationAccess, "Allow Notification access",
+        "It lets Habit Quest see when an app starts and stops playing audio. It does not read your notifications.") {
+        if (!notificationAccess) {
+            GuideButton("Turn it on") { openNotificationAccess(context) }
+            GuideButton("Switch greyed out?") { openAppInfo(context) }
+        }
+    }
+    GuideStep(2, appHabits.isNotEmpty(), "Link the habit to its app",
+        if (appHabits.isEmpty()) "Choose the habit, then pick the app it uses."
+        else appHabits.joinToString("\n") { "${it.name} → ${appLabel(context, it.sourcePackage!!) ?: it.sourcePackage}" }) {
+        GuideButton(if (appHabits.isEmpty()) "Link a habit" else "Link another") { choosing = true }
+    }
+    GuideStep(3, popups, "Allow Display over other apps",
+        "So the \"Did you do it?\" question can appear over the app. Without it, it comes as a notification.") {
+        if (!popups) GuideButton("Turn it on") { openOverlaySetting(context) }
+    }
+    GuideStep(4, null, "Use the app as usual",
         "Start it from the habit's tile or open it directly. About a minute after the audio stops, you are asked: " +
-            "Confirm ✓ or Not done. 5 min or more of audio gives the ×1.2 evidence bonus; under 2 min is ignored.")
+            "Confirm ✓ or Not done. 5 min or more of audio gives the ×1.2 evidence bonus; under 2 min is ignored.") {
+        for (h in appHabits) {
+            val launch = context.packageManager.getLaunchIntentForPackage(h.sourcePackage!!) ?: continue
+            GuideButton("Open ${appLabel(context, h.sourcePackage) ?: h.name}") { context.startActivity(launch) }
+        }
+    }
+
+    if (choosing) {
+        AlertDialog(
+            onDismissRequest = { choosing = false },
+            title = { Text("Which habit uses an app?") },
+            text = {
+                Column {
+                    for (h in allHabits) {
+                        val linked = h.sourcePackage?.let { " · ${appLabel(context, it) ?: it}" } ?: ""
+                        Text(
+                            h.name + linked,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.fillMaxWidth().clickable { choosing = false; onLinkHabit(h.id) }.padding(vertical = 12.dp),
+                        )
+                    }
+                    Text(
+                        "+ New habit",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth().clickable { choosing = false; onLinkHabit(0L) }.padding(vertical = 12.dp),
+                    )
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { choosing = false }) { Text("Cancel") } },
+        )
+    }
     Text(
         "Works with apps that play audio with a media control (most meditation, sleep and podcast apps). " +
             "Apps that only show text or a timer cannot be detected yet: tick those by hand.",
@@ -231,9 +283,33 @@ private fun AppHabitGuide(reminders: ReminderRepository, notificationAccess: Boo
     )
 }
 
-/** One numbered step. [done]: true ✓, false ✗, null = nothing to check. */
+/** Opens Habit Quest's own switch in "Notification access" (Android 11+), or the list of apps before that. */
+private fun openNotificationAccess(context: android.content.Context) {
+    val component = android.content.ComponentName(context, HabitListenerService::class.java)
+    val direct = Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+        .putExtra(AndroidSettings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component.flattenToString())
+    val list = Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && direct.resolveActivity(context.packageManager) != null) direct else list
+    context.startActivity(intent)
+}
+
+/** App info, where "⋮ → Allow restricted settings" is (for apps installed from a file). */
+private fun openAppInfo(context: android.content.Context) {
+    context.startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri()))
+}
+
+private fun openOverlaySetting(context: android.content.Context) {
+    context.startActivity(Intent(AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
+}
+
 @Composable
-private fun GuideStep(number: Int, done: Boolean?, title: String, detail: String) {
+private fun GuideButton(text: String, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, modifier = Modifier.padding(top = 6.dp, end = 8.dp)) { Text(text) }
+}
+
+/** One numbered step. [done]: true ✓, false ✗, null = nothing to check. [actions]: buttons below it. */
+@Composable
+private fun GuideStep(number: Int, done: Boolean?, title: String, detail: String, actions: @Composable () -> Unit = {}) {
     Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 4.dp)) {
         Text(
             when (done) {
@@ -248,6 +324,8 @@ private fun GuideStep(number: Int, done: Boolean?, title: String, detail: String
         Column {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = if (done == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
             Text(detail, style = MaterialTheme.typography.bodySmall)
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow { actions() }
         }
     }
 }

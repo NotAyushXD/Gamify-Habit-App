@@ -109,15 +109,25 @@ class MainActivity : ComponentActivity() {
                             val vm: SummaryViewModel = viewModel(factory = viewModelFactory { initializer { SummaryViewModel(repo) } })
                             SummaryScreen(vm)
                         }
-                        composable("settings") { SettingsScreen(app.reminders) }
+                        composable("settings") {
+                            SettingsScreen(app.reminders, onLinkHabit = { id -> nav.navigate("habit/$id?app=true") })
+                        }
                         // id 0 = new item; the editor then shows the Habit | Task switch.
                         for ((r, kind) in listOf("habit" to ItemKind.HABIT, "task" to ItemKind.TASK)) {
-                            composable("$r/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { e ->
+                            composable(
+                                "$r/{id}?app={app}",
+                                arguments = listOf(
+                                    navArgument("id") { type = NavType.LongType },
+                                    // From the Settings guide: open with "With an app" already chosen.
+                                    navArgument("app") { type = NavType.BoolType; defaultValue = false },
+                                ),
+                            ) { e ->
                                 EditorScreen(
                                     repo = repo,
                                     initialKind = kind,
                                     id = e.arguments?.getLong("id") ?: 0L,
                                     onDone = { nav.popBackStack() },
+                                    startWithApp = e.arguments?.getBoolean("app") ?: false,
                                 )
                             }
                         }

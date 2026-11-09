@@ -129,6 +129,9 @@ class ReminderRepository(
             logs.map { LogLine(toLocal(it.dueAt), it.habitId?.let { id -> names[id] } ?: "Checklist", it.kind, it.result) }
         }
 
+    /** All active habits, for "Link a habit" in the Settings guide. */
+    fun observeActiveHabits(): Flow<List<com.ayushpant.habitquest.data.Habit>> = db.habits().observeActive()
+
     /** Active habits done with an app, for the set-up guide in Settings. */
     fun observeAppHabits(): Flow<List<com.ayushpant.habitquest.data.Habit>> =
         db.habits().observeActive().map { list -> list.filter { it.type == com.ayushpant.habitquest.data.HabitType.APP && it.sourcePackage != null } }
