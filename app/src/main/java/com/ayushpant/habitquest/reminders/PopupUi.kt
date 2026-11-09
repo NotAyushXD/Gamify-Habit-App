@@ -99,6 +99,27 @@ fun PopupCard(
                 is PopupModel.Checklist -> ChecklistContent(model, onClose = { act { reminders.close(model.logId) } }, onSave = { h, t ->
                     act { reminders.saveChecklist(model.logId, h, t) }
                 })
+                is PopupModel.Confirm -> {
+                    Header("Did you do ${model.habitName}?", onClose = onFinished) // closing keeps it on Today
+                    Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "${model.minutes} min, ${model.start.format(HHMM)}–${model.end.format(HHMM)}",
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                        Text(
+                            if (model.evidence) "The audio played the whole time: ×1.2 evidence bonus."
+                            else "Short session: no evidence bonus, it still counts.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Button(onClick = { act { reminders.confirmDetected(model.sessionId) } }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Confirm ✓")
+                        }
+                        OutlinedButton(onClick = { act { reminders.rejectDetected(model.sessionId) } }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Not done")
+                        }
+                        Text("Times wrong? Close this and change them on the Today screen.", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 PopupModel.Test -> {
                     Header("Test popup", onClose = onFinished)
                     Text(

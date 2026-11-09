@@ -53,7 +53,7 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 | Tasks on popups | The first habit reminder popup of the day lists the top 3 open tasks (soonest due). The 11 PM checklist lists open habits and open tasks due today or earlier. |
 | Checklist tick | Creates a CHECKLIST session timed at the window start (generous: full timing points). No checklist popup if nothing is open. |
 | Quiet hours | Default 23:30–06:00, can cross midnight. Popups due in quiet hours are suppressed, not delayed. |
-| Popup rules not yet done | Navigation detection needs the notification listener (Step 3). Calls: AudioManager mode, retry every 60 s. |
+| Popup rules | Calls: AudioManager mode; navigation: an ongoing CATEGORY_NAVIGATION notification (needs Notification access). Both retry every 60 s. |
 | History | Edit time, mark not done, or add a missed session on any day since the habit was created. A closed-day edit replays that habit's streak from its creation; only days from the edited day on are rescored (earlier points stay). Daily bonuses from that day on are rechecked. |
 | Summary | Day/Week/Month. Habit consistency = done scheduled habit-days ÷ scheduled habit-days (today counts only once done; creation day not a miss). Unscheduled done days shown as "extra". Tasks: on-time share of tasks due in the period, completed, average days late, open/overdue now. |
 | Popup host | Overlay `ComposeView` in a `specialUse` foreground service (`PopupService`), started from an exact-alarm receiver. Without the overlay permission: a notification that opens `PopupActivity`. The overlay has a grab bar: drag up/down, the position is kept (`popup_y`). |
@@ -67,7 +67,7 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 | Mind / Body / Soul | Every habit and task has dimensions (`mbs_mask`, DB v4: Mind 1, Body 2, Soul 4). Suggested from the name (`balance/Balance.kt` keyword stems: meditate → Mind+Soul, gym/run → Body+Mind, read → Mind, journal → Mind+Soul…), changeable with chips. The creature line follows the main dimension. Meters: each item counts 1, shared equally between its dimensions; % = done ÷ planned; points shared the same way. Shown on Today (today) and Summary (period). |
 | Motivation | Celebration (confetti, vibration, points) when something is finished; big for a new level, a streak milestone, a perfect day or a kept promise. Daily nudge + quote of the day on Today. Levels from lifetime points (level n starts at 25·n·(n−1); titles in `ScoringConfig`). Reminders show the current streak. Badge "True to my word" (3 kept promises). |
 | Reminder check | Settings shows the next reminder time and the last 20 reminder_log rows, to diagnose missing reminders. |
-| Medito detection | Step 3, next. Detection only suggests; one tap confirms (developer chose this). |
+| App habits (Step 3, v0.5) | Habit type "With an app" + an app picked from the launcher list (Medito first). The tile opens the app (LAUNCH signal). `HabitListenerService` (Notification access) follows the linked apps' media sessions; `detect/AudioTracker` ends a session after 60 s without audio, drops < 2 min, evidence at ≥ 5 min (values in `ScoringConfig`). The result is a SUGGESTED session (start/end set) shown on the tile and as a confirmation popup (Confirm / Not done → REJECTED). Never auto-confirmed. No foreground service: the listener stays bound by the system. Usage events are left for the Step 6 catch-up. With Notification access, popups also wait while a navigation app is active. |
 
 ## Code rules
 

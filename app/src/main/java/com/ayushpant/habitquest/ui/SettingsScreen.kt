@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ayushpant.habitquest.BuildConfig
 import com.ayushpant.habitquest.data.ReminderKind
+import com.ayushpant.habitquest.detect.HabitListenerService
 import com.ayushpant.habitquest.data.ReminderResult
 import com.ayushpant.habitquest.data.Settings
 import androidx.compose.runtime.LaunchedEffect
@@ -78,6 +79,7 @@ fun SettingsScreen(reminders: ReminderRepository) {
     val overlay = remember(refresh) { ReminderScheduler.canDrawOverlays(context) }
     val notify = remember(refresh) { ReminderScheduler.canNotify(context) }
     val exact = remember(refresh) { ReminderScheduler.canUseExactAlarms(context) }
+    val listener = remember(refresh) { HabitListenerService.isAllowed(context) }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
 
     fun save(change: (Settings) -> Settings) {
@@ -117,6 +119,15 @@ fun SettingsScreen(reminders: ReminderRepository) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
+                }
+                PermissionRow(
+                    title = "Notification access",
+                    why = "Lets Habit Quest see when an app habit's app (e.g. Medito) plays audio, to suggest the session. " +
+                        "It does not read your notifications. If the switch is greyed out: App info → ⋮ → Allow restricted settings.",
+                    granted = listener,
+                    action = "Open setting",
+                ) {
+                    context.startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 }
                 PermissionRow(
                     title = "Exact alarms",

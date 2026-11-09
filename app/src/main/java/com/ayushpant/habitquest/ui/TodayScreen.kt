@@ -59,6 +59,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.ayushpant.habitquest.data.HabitRepository
 import com.ayushpant.habitquest.data.HabitToday
+import com.ayushpant.habitquest.data.HabitType
 import com.ayushpant.habitquest.data.PromiseStatus
 import com.ayushpant.habitquest.data.Session
 import com.ayushpant.habitquest.data.TaskToday
@@ -103,6 +104,15 @@ class TodayViewModel(private val repo: HabitRepository) : ViewModel() {
     fun start(habitId: Long) = viewModelScope.launch { repo.startSession(habitId) }
     fun finish(sessionId: Long) = viewModelScope.launch { repo.finishSession(sessionId) }
     fun tick(habitId: Long) = viewModelScope.launch { repo.tickHabit(habitId) }
+    fun confirmDetected(sessionId: Long) = viewModelScope.launch { repo.confirmSuggestion(sessionId) }
+    fun rejectDetected(sessionId: Long) = viewModelScope.launch { repo.rejectSuggestion(sessionId) }
+
+    /** App habit tile (spec 5.1): record the launch, then open the linked app. */
+    fun openApp(context: android.content.Context, habit: com.ayushpant.habitquest.data.Habit) = viewModelScope.launch {
+        repo.recordLaunch(habit.id)
+        val launch = habit.sourcePackage?.let { context.packageManager.getLaunchIntentForPackage(it) }
+        if (launch != null) context.startActivity(launch) else repo.startSession(habit.id) // app gone: a manual session
+    }
     fun remove(sessionId: Long) = viewModelScope.launch { repo.removeSession(sessionId) }
     fun editStart(sessionId: Long, time: LocalTime) = viewModelScope.launch { repo.editSessionStart(sessionId, time) }
     fun timeOf(session: Session): LocalTime = repo.localTimeOf(session.startTime)
@@ -239,10 +249,13 @@ private fun LazyListScope.habitItems(
         return
     }
     items(today.habits, key = { "habit-${it.habit.id}" }) { h ->
+        val context = LocalContext.current
         HabitTile(
             h = h,
             timeOf = vm::timeOf,
-            onStart = { vm.start(h.habit.id) },
+            onStart = { if (h.habit.type == HabitType.APP) vm.openApp(context, h.habit) else vm.start(h.habit.id) },
+            onConfirmDetected = { vm.confirmDetected(it.id) },
+            onRejectDetected = { vm.rejectDetected(it.id) },
             onFinish = { s -> vm.finish(s.id) },
             onCancel = { s -> vm.remove(s.id) },
             onTick = { vm.tick(h.habit.id) },
@@ -319,8 +332,11 @@ private fun HabitTile(
     onOpenDone: (Session) -> Unit,
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
+    onConfirmDetected: (Session) -> Unit = {},
+    onRejectDetected: (Session) -> Unit = {},
 ) {
     val firstDone = h.done.firstOrNull()
+    val isApp = h.habit.type == HabitType.APP
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -351,14 +367,27 @@ private fun HabitTile(
                         val bonus = if (firstDone.bonusPoints > 0) " (incl. +${firstDone.bonusPoints} bonus)" else ""
                         "Done at ${timeOf(firstDone).format(HHMM)}  ·  +${h.points}$bonus$kept"
                     }
+                    h.suggested != null -> {
+                        val s = h.suggested
+                        "🎧 Detected ${timeOf(s).format(HHMM)}–${java.time.Instant.ofEpochMilli(s.endTime!!).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(HHMM)}" +
+                            " (${(s.endTime - s.startTime) / 60_000} min). Was it you?"
+                    }
                     h.inProgress != null -> "In progress since ${timeOf(h.inProgress).format(HHMM)}"
                     h.promise != null -> "🤝 You promised: today at ${java.time.Instant.ofEpochMilli(h.promise.dueAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(HHMM)}"
                     h.skip?.promised == true -> "Skipped today · promise made"
                     h.skip != null -> "Skipped today"
                     !h.scheduledToday -> "Not scheduled today"
+                    isApp -> "Not done — tap to open the app"
                     else -> "Not done — tap to start"
                 }
                 Text(status, style = MaterialTheme.typography.bodySmall)
+                if (h.suggested != null && firstDone == null) {
+                    Row(Modifier.padding(top = 8.dp)) {
+                        Button(onClick = { onConfirmDetected(h.suggested) }) { Text("Confirm ✓") }
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(onClick = { onRejectDetected(h.suggested) }) { Text("Not done") }
+                    }
+                }
                 if (h.inProgress != null && firstDone == null) {
                     Row(Modifier.padding(top = 8.dp)) {
                         Button(onClick = { onFinish(h.inProgress) }) { Text("Done") }

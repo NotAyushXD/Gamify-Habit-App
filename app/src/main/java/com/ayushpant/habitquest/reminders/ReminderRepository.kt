@@ -72,6 +72,18 @@ sealed interface PopupModel {
         val tasks: List<TaskLine>,
     ) : PopupModel
 
+    /** Spec 5.1: "the habit, the start time, the end time, and the points", for a detected session. */
+    data class Confirm(
+        val sessionId: Long,
+        val habitName: String,
+        val start: LocalTime,
+        val end: LocalTime,
+        val evidence: Boolean,
+    ) : PopupModel {
+        override val logId = -2L
+        val minutes: Long get() = java.time.Duration.between(start, end).toMinutes()
+    }
+
     /** From the "Test popup" button in Settings. */
     data object Test : PopupModel {
         override val logId = -1L
@@ -267,6 +279,17 @@ class ReminderRepository(
         )
         resolve(logId, ReminderResult.SNOOZED)
     }
+
+    /** The confirmation popup for a detected session, or null if it was already answered. */
+    suspend fun confirmationFor(sessionId: Long): PopupModel.Confirm? {
+        val s = habits.session(sessionId) ?: return null
+        if (s.status != com.ayushpant.habitquest.data.SessionStatus.SUGGESTED || s.endTime == null) return null
+        val habit = db.habits().get(s.habitId) ?: return null
+        return PopupModel.Confirm(s.id, habit.name, toLocal(s.startTime).toLocalTime(), toLocal(s.endTime).toLocalTime(), s.evidenceFound)
+    }
+
+    suspend fun confirmDetected(sessionId: Long) = habits.confirmSuggestion(sessionId)
+    suspend fun rejectDetected(sessionId: Long) = habits.rejectSuggestion(sessionId)
 
     /** What the promise screen needs: the habit, a suggested time, and whether the oath is needed. */
     suspend fun promiseContext(logId: Long, habitId: Long): PromiseContext? {

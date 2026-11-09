@@ -38,6 +38,7 @@ class PopupActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val logId = intent.getLongExtra(EXTRA_LOG_ID, Long.MIN_VALUE)
         val promiseHabit = intent.getLongExtra(EXTRA_PROMISE_HABIT, -1L)
+        val sessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L)
         val app = application as HabitQuestApp
         val reminders = app.reminders
         setContent {
@@ -50,6 +51,9 @@ class PopupActivity : ComponentActivity() {
                     if (promiseHabit >= 0) {
                         promise = reminders.promiseContext(logId, promiseHabit)
                         if (promise == null) finish()
+                    } else if (sessionId >= 0) {
+                        model = reminders.confirmationFor(sessionId)
+                        if (model == null) finish()
                     } else {
                         model = reminders.popupFor(logId)
                         if (model == null) finish()
@@ -104,6 +108,7 @@ class PopupActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_LOG_ID = "log_id"
+        const val EXTRA_SESSION_ID = "session_id"
         private const val EXTRA_PROMISE_HABIT = "promise_habit"
 
         fun promiseIntent(context: Context, logId: Long, habitId: Long): Intent =

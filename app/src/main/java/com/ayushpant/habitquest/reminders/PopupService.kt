@@ -62,10 +62,12 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
         )
         val ids = intent?.getLongArrayExtra(EXTRA_LOG_IDS) ?: longArrayOf()
+        val sessionIds = intent?.getLongArrayExtra(EXTRA_SESSION_IDS) ?: longArrayOf()
         lifecycleScope.launch {
             val reminders = (application as HabitQuestApp).reminders
             savedY = reminders.popupY()
             for (id in ids) reminders.popupFor(id)?.let { queue.addLast(it) }
+            for (id in sessionIds) reminders.confirmationFor(id)?.let { queue.addLast(it) }
             showNext()
         }
         return START_NOT_STICKY
@@ -166,10 +168,16 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
 
     companion object {
         private const val EXTRA_LOG_IDS = "log_ids"
+        private const val EXTRA_SESSION_IDS = "session_ids"
         private const val NOTIFICATION_ID = 1001
 
         fun start(context: Context, logIds: LongArray) {
             context.startForegroundService(Intent(context, PopupService::class.java).putExtra(EXTRA_LOG_IDS, logIds))
+        }
+
+        /** Confirmation popups for detected sessions (spec 5.1 step 9). */
+        fun startConfirm(context: Context, sessionIds: LongArray) {
+            context.startForegroundService(Intent(context, PopupService::class.java).putExtra(EXTRA_SESSION_IDS, sessionIds))
         }
     }
 }

@@ -45,6 +45,7 @@ import com.ayushpant.habitquest.balance.maskOf
 import com.ayushpant.habitquest.balance.suggestDimensions
 import com.ayushpant.habitquest.data.CreatureLine
 import com.ayushpant.habitquest.data.Habit
+import com.ayushpant.habitquest.data.HabitType
 import com.ayushpant.habitquest.data.HabitRepository
 import com.ayushpant.habitquest.data.Task
 import com.ayushpant.habitquest.scoring.EVERY_DAY_MASK
@@ -83,6 +84,10 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     var windowStart by remember { mutableStateOf(LocalTime.of(7, 0)) }
     var windowEnd by remember { mutableStateOf(LocalTime.of(8, 0)) }
     var daysMask by remember { mutableStateOf(EVERY_DAY_MASK) }
+    // App habit (Step 3): opens and watches an app, e.g. Medito.
+    var habitType by remember { mutableStateOf(HabitType.MANUAL) }
+    var sourcePackage by remember { mutableStateOf<String?>(null) }
+    var pickingApp by remember { mutableStateOf(false) }
 
     // Mind / Body / Soul: suggested from the name until the user taps a chip.
     var dims by remember { mutableStateOf(emptySet<Dimension>()) }
@@ -101,6 +106,8 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 windowStart = h.windowStart
                 windowEnd = h.windowEnd
                 daysMask = h.daysMask
+                habitType = if (h.type == HabitType.APP) HabitType.APP else HabitType.MANUAL
+                sourcePackage = h.sourcePackage
                 dims = dimensionsOf(h.mbsMask)
                 dimsTouched = h.mbsMask != 0
             }
@@ -135,7 +142,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
 
     val windowValid = windowStart < windowEnd
     val canSave = name.isNotBlank() && when (kind) {
-        ItemKind.HABIT -> windowValid && daysMask != 0
+        ItemKind.HABIT -> windowValid && daysMask != 0 && (habitType == HabitType.MANUAL || sourcePackage != null)
         ItemKind.TASK -> true
     }
     val noun = if (kind == ItemKind.HABIT) "habit" else "task"
@@ -255,10 +262,29 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
             }
 
             if (kind == ItemKind.HABIT) {
-                Text(
-                    "Type: manual. App and zone habits come in later steps.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Column {
+                    Text("How do you do it?", style = MaterialTheme.typography.titleSmall)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        SegmentedButton(selected = habitType == HabitType.MANUAL, onClick = { habitType = HabitType.MANUAL }, shape = SegmentedButtonDefaults.itemShape(0, 2)) {
+                            Text("Manual")
+                        }
+                        SegmentedButton(selected = habitType == HabitType.APP, onClick = { habitType = HabitType.APP }, shape = SegmentedButtonDefaults.itemShape(1, 2)) {
+                            Text("With an app")
+                        }
+                    }
+                    if (habitType == HabitType.APP) {
+                        OutlinedButton(onClick = { pickingApp = true }, modifier = Modifier.padding(top = 8.dp)) {
+                            Text(sourcePackage?.let { "App: ${appLabel(context, it) ?: it}" } ?: "Choose the app")
+                        }
+                        Text(
+                            "Tap the habit's tile to open the app. When its audio stops, Habit Quest asks you to confirm " +
+                                "the session (needs Notification access in Settings). You can always tick it by hand too.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        Text("You tick it yourself, or tap Start and Done. Zone habits come in a later step.", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
 
             Button(
@@ -276,6 +302,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                                     base.copy(
                                         name = name.trim(), windowStart = windowStart, windowEnd = windowEnd,
                                         daysMask = daysMask, mbsMask = maskOf(dims),
+                                        type = habitType, sourcePackage = if (habitType == HabitType.APP) sourcePackage else null,
                                     )
                                 )
                             }
@@ -297,6 +324,20 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 }
             }
         }
+    }
+
+    if (pickingApp) {
+        AppPickerDialog(
+            onPick = { app ->
+                sourcePackage = app.packageName
+                if (name.isBlank() && app.label.contains("medito", ignoreCase = true)) {
+                    name = "Meditate"
+                    if (!dimsTouched) dims = suggestDimensions(name)
+                }
+                pickingApp = false
+            },
+            onDismiss = { pickingApp = false },
+        )
     }
 
     if (confirmDelete) {

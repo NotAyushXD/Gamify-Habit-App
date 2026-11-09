@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import com.ayushpant.habitquest.HabitQuestApp
 import com.ayushpant.habitquest.R
 import com.ayushpant.habitquest.data.LOG_TAG
+import com.ayushpant.habitquest.detect.HabitListenerService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -91,8 +92,8 @@ private fun BroadcastReceiver.runAsync(block: suspend () -> Unit) {
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) = runAsync {
         val app = context.applicationContext as HabitQuestApp
-        if (ReminderScheduler.inCall(context)) {
-            Log.i(LOG_TAG, "In a call: reminders wait")
+        if (ReminderScheduler.inCall(context) || HabitListenerService.isNavigating()) {
+            Log.i(LOG_TAG, "In a call or navigating: reminders wait")
             ReminderScheduler.setAlarm(context, app.reminders.retryMillis())
             return@runAsync
         }
@@ -154,6 +155,38 @@ object PopupPresenter {
         }
     }
 
+    /** The detected-session confirmation: over other apps, or as a notification. */
+    suspend fun showConfirmation(context: Context, sessionId: Long) {
+        if (ReminderScheduler.canDrawOverlays(context)) {
+            try {
+                PopupService.startConfirm(context, longArrayOf(sessionId))
+                return
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Popup service could not start, using a notification", e)
+            }
+        }
+        val app = context.applicationContext as HabitQuestApp
+        val model = app.reminders.confirmationFor(sessionId) ?: return
+        if (!ReminderScheduler.canNotify(context)) return
+        val open = PendingIntent.getActivity(
+            context, (100_000 + sessionId).toInt(),
+            Intent(context, PopupActivity::class.java).putExtra(PopupActivity.EXTRA_SESSION_ID, sessionId),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_REMINDERS)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Did you do ${model.habitName}?")
+            .setContentText("${model.minutes} min detected. Tap to confirm.")
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        try {
+            NotificationManagerCompat.from(context).notify((100_000 + sessionId).toInt(), notification)
+        } catch (e: SecurityException) {
+            Log.w(LOG_TAG, "Notification permission missing", e)
+        }
+    }
+
     fun showTest(context: Context) {
         if (ReminderScheduler.canDrawOverlays(context)) {
             PopupService.start(context, longArrayOf(PopupModel.Test.logId))
@@ -170,6 +203,7 @@ object PopupPresenter {
         val (title, text) = when (model) {
             is PopupModel.Reminder -> popupTitle(model) to "Tap to start, snooze or skip."
             is PopupModel.Checklist -> "11 PM checklist" to "Tick what you did today."
+            is PopupModel.Confirm -> "Did you do ${model.habitName}?" to "${model.minutes} min detected. Tap to confirm."
             PopupModel.Test -> "Test reminder" to "Notifications work. Allow \"Display over other apps\" for popups."
         }
         val open = PendingIntent.getActivity(
