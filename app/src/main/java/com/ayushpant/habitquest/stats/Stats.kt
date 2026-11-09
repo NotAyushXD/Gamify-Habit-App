@@ -5,6 +5,7 @@ import com.ayushpant.habitquest.balance.DimensionScore
 import com.ayushpant.habitquest.balance.balance
 import com.ayushpant.habitquest.data.Habit
 import com.ayushpant.habitquest.data.HabitSkip
+import com.ayushpant.habitquest.data.PromiseStatus
 import com.ayushpant.habitquest.data.RangeData
 import com.ayushpant.habitquest.data.Session
 import com.ayushpant.habitquest.data.Task
@@ -107,6 +108,9 @@ data class Summary(
     val comebacks: Int = 0,
     /** Mind / Body / Soul for the period. */
     val balance: List<DimensionScore> = emptyList(),
+    val promisesKept: Int = 0,
+    /** Promises due in the period that are kept or broken (not still open). */
+    val promisesDecided: Int = 0,
 ) {
     val scheduled get() = habits.sumOf { it.scheduled }
     val done get() = habits.sumOf { it.done }
@@ -227,6 +231,8 @@ fun buildSummary(data: RangeData, today: LocalDate): Summary {
             for (t in doneTasks) merge(t.doneDay!!, t.points, Int::plus)
         },
         comebacks = data.sessions.count { it.bonusPoints > 0 },
+        promisesKept = data.promises.count { it.status == PromiseStatus.KEPT },
+        promisesDecided = data.promises.count { it.status != PromiseStatus.OPEN },
         balance = run {
             val masks = data.habits.associate { it.id to it.mbsMask }
             val pointsByHabitDay = data.sessions.groupBy { it.habitId to it.day }.mapValues { (_, l) -> l.sumOf { it.points } }

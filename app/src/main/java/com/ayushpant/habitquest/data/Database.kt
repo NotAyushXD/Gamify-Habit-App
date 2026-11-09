@@ -60,6 +60,9 @@ interface SessionDao {
     @Query("SELECT * FROM session WHERE id = :id")
     suspend fun get(id: Long): Session?
 
+    @Query("SELECT COALESCE(SUM(points), 0) FROM session WHERE status = 'CONFIRMED'")
+    fun observeTotalPoints(): Flow<Int>
+
     @Query("SELECT * FROM session WHERE day BETWEEN :from AND :to AND status = 'CONFIRMED' ORDER BY day DESC, start_time")
     fun observeConfirmedBetween(from: LocalDate, to: LocalDate): Flow<List<Session>>
 
@@ -88,6 +91,10 @@ interface TaskDao {
     /** Tasks done in the range, and tasks due in the range (for Summary). Deleted ones excluded. */
     @Query("SELECT * FROM task WHERE active = 1 AND ((done_day BETWEEN :from AND :to) OR (due_date BETWEEN :from AND :to)) ORDER BY done_day DESC")
     fun observeDoneOrDueBetween(from: LocalDate, to: LocalDate): Flow<List<Task>>
+
+    /** Points of every task ever done, deleted ones too (their points stay). */
+    @Query("SELECT COALESCE(SUM(points), 0) FROM task WHERE done_day IS NOT NULL")
+    fun observeTotalPoints(): Flow<Int>
 
     /** All open tasks, soonest due first. */
     @Query("SELECT * FROM task WHERE active = 1 AND done_day IS NULL ORDER BY due_date, id")
@@ -188,6 +195,9 @@ interface DayBonusDao {
 
     @Query("DELETE FROM day_bonus WHERE day = :day")
     suspend fun delete(day: LocalDate)
+
+    @Query("SELECT COALESCE(SUM(points), 0) FROM day_bonus")
+    fun observeTotalPoints(): Flow<Int>
 
     @Query("SELECT * FROM day_bonus WHERE day BETWEEN :from AND :to")
     fun observeBetween(from: LocalDate, to: LocalDate): Flow<List<DayBonus>>

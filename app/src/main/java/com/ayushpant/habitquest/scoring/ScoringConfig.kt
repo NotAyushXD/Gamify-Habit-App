@@ -53,6 +53,22 @@ data class ScoringConfig(
         1 to 0.8,
     ),
 
+    // Levels (decision after the spec, brought forward from Step 5): lifetime points give a level.
+    // Level n starts at levelStep × n × (n − 1) / 2 points: 0, 50, 150, 300, 500, 750, …
+    val levelStep: Int = 50,
+    // (first level, title), checked from the top.
+    val levelTitles: List<Pair<Int, String>> = listOf(
+        20 to "Legend",
+        16 to "Unstoppable",
+        12 to "Disciplined",
+        8 to "Committed",
+        5 to "Steady",
+        3 to "Starter",
+        1 to "Beginner",
+    ),
+    // Streak lengths that get a big celebration.
+    val streakMilestones: List<Int> = listOf(3, 7, 14, 21, 30, 50, 75, 100, 150, 200, 365),
+
     // 6.3 Day close runs at this time and closes the previous day.
     val dayCloseTime: LocalTime = LocalTime.of(0, 5),
 ) {

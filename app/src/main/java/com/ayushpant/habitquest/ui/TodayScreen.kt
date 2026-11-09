@@ -3,6 +3,12 @@ package com.ayushpant.habitquest.ui
 import android.app.TimePickerDialog
 import android.text.format.DateFormat
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import com.ayushpant.habitquest.stats.quoteOfTheDay
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -123,11 +129,21 @@ fun TodayScreen(
     var editing by remember { mutableStateOf<Session?>(null) }
     var reopening by remember { mutableStateOf<TaskToday?>(null) }
 
+    // Celebrate what was just finished: compare with the data before the change.
+    var previous by remember { mutableStateOf<TodayData?>(null) }
+    var celebration by remember { mutableStateOf<Celebration?>(null) }
+    LaunchedEffect(data) {
+        val now = data ?: return@LaunchedEffect
+        previous?.let { before -> celebrationFor(before, now)?.let { celebration = it } }
+        previous = now
+    }
+
     LifecycleResumeEffect(Unit) {
         vm.refresh()
         onPauseOrDispose { }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(title = {
@@ -145,7 +161,10 @@ fun TodayScreen(
     ) { padding ->
         val today = data ?: return@Scaffold
         Column(Modifier.fillMaxSize().padding(padding)) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { SummaryCard(today) }
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                NudgeCard(today)
+                SummaryCard(today)
+            }
             PrimaryTabRow(selectedTabIndex = tab) {
                 val scheduled = today.habits.count { it.scheduledToday }
                 val doneScheduled = today.habits.count { it.scheduledToday && it.isDone }
@@ -169,6 +188,8 @@ fun TodayScreen(
                 )
             }
         }
+    }
+    celebration?.let { c -> CelebrationOverlay(c, onDone = { if (celebration?.id == c.id) celebration = null }) }
     }
 
     reopening?.let { t ->
@@ -235,10 +256,38 @@ private fun TaskList(today: TodayData, onTick: (TaskToday) -> Unit, onEditTask: 
 }
 
 @Composable
+private fun NudgeCard(today: TodayData) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            today.nudge?.let { Text(it, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium) }
+            Text(
+                "“${quoteOfTheDay(today.day.dayOfYear)}”",
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = FontStyle.Italic,
+                modifier = Modifier.padding(top = if (today.nudge != null) 4.dp else 0.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun SummaryCard(today: TodayData) {
+    val level = today.level
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("${today.totalPoints} points today", style = MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${today.totalPoints} points today", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                Text("Lv ${level.number} · ${level.title}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            }
+            LinearProgressIndicator(progress = { level.progress }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            Text(
+                "${level.toNext} points to Lv ${level.number + 1} · ${today.lifetimePoints} in total",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+            )
             val bonusText = if (today.dailyBonus > 0) {
                 "All habits done: +${today.dailyBonus} daily bonus included"
             } else {

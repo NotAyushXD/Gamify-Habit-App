@@ -6,6 +6,7 @@ import com.ayushpant.habitquest.balance.Dimension
 import com.ayushpant.habitquest.balance.maskOf
 import com.ayushpant.habitquest.scoring.EVERY_DAY_MASK
 import com.ayushpant.habitquest.scoring.ScoringConfig
+import com.ayushpant.habitquest.ui.celebrationFor
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -440,5 +441,36 @@ class HabitRepositoryTest {
         assertEquals(PromiseStatus.BROKEN, db.promises().getDueOn(monday.plusDays(1)).single().status)
         assertEquals(PromiseStatus.OPEN, db.promises().getDueOn(monday.plusDays(2)).single().status)
         assertNull(habitToday(id).promise) // today's promise is broken, so no banner
+    }
+
+    // ---- Motivation ------------------------------------------------------------------------------
+
+    @Test
+    fun `celebrations - a normal tick, then the perfect day`() = runBlocking {
+        val a = newHabit("Meditate")
+        val b = newHabit("Read")
+        setTime(monday, 7, 0)
+        val start = today()
+        repo.tickHabit(a)
+        val afterOne = today()
+        val first = celebrationFor(start, afterOne)!!
+        assertFalse(first.big)
+        assertEquals("+10 points", first.subtitle)
+
+        repo.tickHabit(b)
+        val perfect = celebrationFor(afterOne, today())!!
+        assertEquals("🌟 Perfect day!", perfect.title)
+        assertNull(celebrationFor(today(), today())) // nothing new: nothing to celebrate
+    }
+
+    @Test
+    fun `lifetime points add habits, bonuses and tasks, and give the level`() = runBlocking {
+        val a = newHabit("Meditate")
+        val t = repo.saveTask(Task(name = "Call bank", dueDate = monday, basePoints = 10, createdDate = monday))
+        setTime(monday, 7, 0)
+        repo.tickHabit(a) // 10 + daily bonus 10
+        repo.completeTask(t) // 12
+        assertEquals(32, today().lifetimePoints)
+        assertEquals(1, today().level.number)
     }
 }

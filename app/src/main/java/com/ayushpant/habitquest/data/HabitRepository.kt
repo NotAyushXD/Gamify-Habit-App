@@ -22,6 +22,11 @@ import com.ayushpant.habitquest.scoring.daysLate
 import com.ayushpant.habitquest.scoring.scoreHabitDay
 import com.ayushpant.habitquest.scoring.taskPoints
 import com.ayushpant.habitquest.scoring.weekStart
+import com.ayushpant.habitquest.stats.Level
+import com.ayushpant.habitquest.stats.NudgeHabit
+import com.ayushpant.habitquest.stats.dailyNudge
+import com.ayushpant.habitquest.stats.levelFor
+import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import java.time.Clock
@@ -70,7 +75,25 @@ data class TodayData(
     val dailyBonus: Int,
     /** Open tasks (soonest due first), then tasks done today. */
     val tasks: List<TaskToday> = emptyList(),
+    /** Every point ever earned: habits, daily bonuses and tasks. Gives the level. */
+    val lifetimePoints: Int = 0,
 ) {
+    val level: Level get() = levelFor(lifetimePoints)
+
+    val nudge: String?
+        get() = dailyNudge(
+            habits.map {
+                NudgeHabit(
+                    it.habit.name, it.scheduledToday, it.isDone, it.habit.mbsMask,
+                    promisedAt = it.promise?.takeIf { p -> p.status == PromiseStatus.OPEN }?.let { p ->
+                        Instant.ofEpochMilli(p.dueAt).atZone(ZoneId.systemDefault()).toLocalTime().toString()
+                    },
+                )
+            },
+            balance,
+            ScoringConfig.DEFAULT.dailyBonus,
+        )
+
     val totalPoints get() = habits.sumOf { it.points } + dailyBonus + tasks.filter { it.isDone }.sumOf { it.points }
 
     /**
@@ -177,7 +200,9 @@ class HabitRepository(
     }.combine(db.promises().observeDueOn(day)) { data, promises ->
         val byHabit = promises.filter { it.status != PromiseStatus.BROKEN }.associateBy { it.habitId }
         data.copy(habits = data.habits.map { it.copy(promise = byHabit[it.habit.id]) })
-    }
+    }.combine(
+        combine(db.sessions().observeTotalPoints(), db.dayBonus().observeTotalPoints(), db.tasks().observeTotalPoints()) { a, b, c -> a + b + c }
+    ) { data, total -> data.copy(lifetimePoints = total) }
 
     suspend fun getHabit(id: Long): Habit? = db.habits().get(id)
 

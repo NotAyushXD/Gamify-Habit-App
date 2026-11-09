@@ -80,6 +80,7 @@ fun highlights(s: Summary): List<Highlight> = buildList {
     if (s.tasks.completed > 0) add(Highlight("📋", "Tasks finished", "${s.tasks.completed} (${s.tasks.completedOnTime} on time)"))
     if (s.tasks.completedEarly > 0) add(Highlight("⚡", "Finished early", "${s.tasks.completedEarly} task${plural(s.tasks.completedEarly)}"))
     if (s.comebacks > 0) add(Highlight("💪", "Comebacks", "${s.comebacks} time${plural(s.comebacks)} you came back after a miss"))
+    if (s.promisesKept > 0) add(Highlight("🤝", "Promises kept", "${s.promisesKept} of ${s.promisesDecided}"))
 }
 
 data class Badge(
@@ -104,6 +105,7 @@ fun badges(s: Summary): List<Badge> {
         Badge("🔥", "On fire", "A 7-day streak", streak, 7),
         Badge("🚀", "Unstoppable", "A 30-day streak", streak, 30),
         Badge("💪", "Comeback", "Come back after a miss", s.comebacks, 1),
+        Badge("🤝", "True to my word", "Keep 3 promises", s.promisesKept, 3),
         Badge("🐦", "Early bird", "Finish 3 tasks before they are due", s.tasks.completedEarly, 3),
         Badge("🎯", "Task master", "Finish 5 tasks on time", s.tasks.completedOnTime, 5),
         Badge("💯", "Century", "Earn 100 points", s.points, 100),
