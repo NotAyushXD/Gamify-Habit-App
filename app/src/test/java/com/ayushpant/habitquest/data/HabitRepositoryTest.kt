@@ -12,6 +12,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -472,5 +473,56 @@ class HabitRepositoryTest {
         repo.completeTask(t) // 12
         assertEquals(32, today().lifetimePoints)
         assertEquals(1, today().level.number)
+    }
+
+    // ---- App habits: detected sessions -----------------------------------------------------------
+
+    private fun appHabit(pkg: String = "meditofoundation.medito") = runBlocking {
+        repo.saveHabit(
+            Habit(name = "Meditate", type = HabitType.APP, sourcePackage = pkg, windowStart = LocalTime.of(6, 30),
+                windowEnd = LocalTime.of(7, 30), basePoints = 10, creatureLine = CreatureLine.CALM,
+                daysMask = EVERY_DAY_MASK, createdDate = monday)
+        )
+    }
+    private fun ms(h: Int, m: Int) = at(monday, h, m).toEpochMilli()
+
+    @Test
+    fun `a detected session is only a suggestion until confirmed, then scores with evidence`() = runBlocking {
+        val id = appHabit()
+        setTime(monday, 7, 20)
+        val sid = repo.suggestDetected("meditofoundation.medito", ms(7, 5), ms(7, 17), evidence = true, source = SessionSource.LIVE)!!
+        val before = habitToday(id)
+        assertFalse(before.isDone)
+        assertEquals(0, before.points)
+        assertEquals(sid, before.suggested!!.id)
+
+        repo.confirmSuggestion(sid)
+        val after = habitToday(id)
+        assertTrue(after.isDone)
+        assertEquals(12, after.points) // 10 × in window 1.0 × streak 1.0 × evidence 1.2
+        assertNull(after.suggested)
+    }
+
+    @Test
+    fun `not done rejects the suggestion and it never counts`() = runBlocking {
+        val id = appHabit()
+        setTime(monday, 7, 20)
+        val sid = repo.suggestDetected("meditofoundation.medito", ms(7, 5), ms(7, 17), true, SessionSource.LIVE)!!
+        repo.rejectSuggestion(sid)
+        assertNull(habitToday(id).suggested)
+        assertEquals(SessionStatus.REJECTED, db.sessions().get(sid)!!.status)
+        repo.confirmSuggestion(sid) // too late: a rejected one cannot be confirmed
+        assertFalse(habitToday(id).isDone)
+    }
+
+    @Test
+    fun `no suggestion for an unknown app, a done day, or the same session twice`() = runBlocking {
+        val id = appHabit()
+        setTime(monday, 7, 20)
+        assertNull(repo.suggestDetected("com.spotify.music", ms(7, 0), ms(7, 10), true, SessionSource.LIVE))
+        assertNotNull(repo.suggestDetected("meditofoundation.medito", ms(7, 0), ms(7, 10), true, SessionSource.LIVE))
+        assertNull(repo.suggestDetected("meditofoundation.medito", ms(7, 5), ms(7, 12), true, SessionSource.LIVE)) // overlaps
+        repo.tickHabit(id)
+        assertNull(repo.suggestDetected("meditofoundation.medito", ms(7, 15), ms(7, 25), true, SessionSource.LIVE)) // done
     }
 }

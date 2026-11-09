@@ -53,6 +53,14 @@ data class ScoringConfig(
         1 to 0.8,
     ),
 
+    // App habits (spec 5.1, 5.5): audio from the linked app is the main signal.
+    /** Audio must stop for this long before the session counts as ended (a pause is not the end). */
+    val audioEndGraceSeconds: Long = 60,
+    /** Less audio than this is not suggested at all (a preview, a mistake). */
+    val minDetectedMinutes: Long = 2,
+    /** This much audio is "evidence" for the ×1.2 evidence factor. */
+    val evidenceAudioMinutes: Long = 5,
+
     // Levels (decision after the spec, brought forward from Step 5): lifetime points give a level.
     // Level n starts at levelStep × n × (n − 1) / 2 points: 0, 50, 150, 300, 500, 750, …
     val levelStep: Int = 50,

@@ -53,6 +53,8 @@ data class HabitToday(
     val skip: HabitSkip? = null,
     /** A promise for today (open or kept). */
     val promise: Promise? = null,
+    /** A detected session waiting for the user's confirmation (app habits, spec 5.1). */
+    val suggested: Session? = null,
 ) {
     val isDone get() = done.isNotEmpty()
     val points get() = done.sumOf { it.points }
@@ -177,6 +179,7 @@ class HabitRepository(
                     habit = habit,
                     scheduledToday = isScheduledOn(habit.daysMask, day),
                     inProgress = mine.firstOrNull { it.status == SessionStatus.SUGGESTED && it.endTime == null },
+                    suggested = mine.lastOrNull { it.status == SessionStatus.SUGGESTED && it.endTime != null },
                     done = done,
                     streakDays = if (done.isNotEmpty()) stored + 1 else stored,
                     freezeUsed = row != null && row.freezeWeek == weekStart(day) && row.freezesUsed >= cfg.freezesPerWeek,
@@ -343,6 +346,57 @@ class HabitRepository(
         val s = db.sessions().get(sessionId) ?: return
         changeDay(s.day, s.habitId) { db.sessions().delete(sessionId) }
     }
+
+    // ---- App habits: detected sessions (spec 5.1, 5.2) ------------------------------------------
+
+    /** Packages of the active app habits: the apps whose audio the listener watches. */
+    suspend fun watchedPackages(): Set<String> =
+        db.habits().getActive().filter { it.type == HabitType.APP }.mapNotNull { it.sourcePackage }.toSet()
+
+    /** The user tapped an app habit's tile: the source app is opened (spec 5.1 steps 1–4). */
+    suspend fun recordLaunch(habitId: Long) {
+        val habit = db.habits().get(habitId) ?: return
+        logSignal(SignalKind.LAUNCH, "${habit.sourcePackage} habit=$habitId")
+    }
+
+    /**
+     * The listener found a finished listening session. It becomes a SUGGESTED session: it gives no
+     * points until the user confirms it (spec 2.1, 10). Returns the session id, or null when nothing
+     * new is suggested (no app habit for that app, already done that day, or already suggested).
+     */
+    suspend fun suggestDetected(packageName: String, start: Long, end: Long, evidence: Boolean, source: SessionSource): Long? {
+        logSignal(SignalKind.MEDIA, "session $packageName ${(end - start) / 60_000} min evidence=$evidence")
+        val habit = db.habits().getActive().firstOrNull { it.type == HabitType.APP && it.sourcePackage == packageName } ?: return null
+        val day = Instant.ofEpochMilli(start).atZone(clock.zone).toLocalDate()
+        val sessions = db.sessions().getForDay(day).filter { it.habitId == habit.id }
+        if (sessions.any { it.status == SessionStatus.CONFIRMED }) return null
+        if (sessions.any { it.status == SessionStatus.SUGGESTED && it.endTime != null && it.startTime < end && it.endTime > start }) return null
+        val id = db.sessions().insert(
+            Session(
+                habitId = habit.id, day = day, startTime = start, endTime = end,
+                status = SessionStatus.SUGGESTED, source = source, evidenceFound = evidence,
+            )
+        )
+        onChange()
+        return id
+    }
+
+    /** "Confirm": the user says the detected session is right. Only now does it give points. */
+    suspend fun confirmSuggestion(sessionId: Long) {
+        val s = db.sessions().get(sessionId) ?: return
+        if (s.status != SessionStatus.SUGGESTED) return
+        changeDay(s.day, s.habitId) { db.sessions().update(s.copy(status = SessionStatus.CONFIRMED)) }
+    }
+
+    /** "Not done": the detection was wrong. Kept as REJECTED for the debug log, never counted. */
+    suspend fun rejectSuggestion(sessionId: Long) {
+        val s = db.sessions().get(sessionId) ?: return
+        if (s.status != SessionStatus.SUGGESTED) return
+        db.sessions().update(s.copy(status = SessionStatus.REJECTED))
+        onChange()
+    }
+
+    suspend fun session(id: Long): Session? = db.sessions().get(id)
 
     /** "Skip today" / "Can't today". Stops today's reminders for the habit. It is still a miss. */
     suspend fun skipToday(habitId: Long, promised: Boolean) {
@@ -600,7 +654,7 @@ class HabitRepository(
         db.appState().put(AppState("task_last_run.$task", Instant.now(clock).toString()))
     }
 
-    private suspend fun logSignal(kind: SignalKind, payload: String) {
+    suspend fun logSignal(kind: SignalKind, payload: String) {
         db.signals().insert(SignalLog(time = clock.millis(), kind = kind, payload = payload))
     }
 
