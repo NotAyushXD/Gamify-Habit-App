@@ -22,6 +22,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -74,6 +76,7 @@ fun SettingsScreen(
     /** A permission may have changed: register zones and alarms again. */
     onPermissionsChanged: () -> Unit = {},
     onShowWelcome: () -> Unit = {},
+    onGuide: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -122,6 +125,21 @@ fun SettingsScreen(
             Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // The guide first: what every feature does and how to use it.
+            Card(
+                Modifier.fillMaxWidth().clickable(onClick = onGuide),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("📘", fontSize = 30.sp)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("How to use Habit Quest", style = MaterialTheme.typography.titleMedium)
+                        Text("Every feature in a few simple steps", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("›", fontSize = 28.sp)
+                }
+            }
+
             Section("Permissions") {
                 PermissionRow(
                     title = "Display over other apps",

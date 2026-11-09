@@ -136,6 +136,14 @@ class SummaryRenderTest {
     }
 
     @Test
+    fun renderGuide() {
+        compose.setContent { HabitQuestTheme { GuideScreen(onBack = {}, onAction = {}) } }
+        compose.onNodeWithText("Points").performClick()
+        compose.mainClock.advanceTimeBy(1_000)
+        save(File("build/render").apply { mkdirs() }, "guide.png")
+    }
+
+    @Test
     fun renderPromise() {
         val out = File("build/render").apply { mkdirs() }
         val ctx = PromiseContext(logId = 1, habitId = 1, habitName = "Meditate", suggestedTime = LocalTime.of(7, 0), priorMisses = 2, oathRequired = true)

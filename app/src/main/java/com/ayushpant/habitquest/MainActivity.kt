@@ -34,6 +34,8 @@ import com.ayushpant.habitquest.data.HabitType
 import com.ayushpant.habitquest.ui.EditorScreen
 import com.ayushpant.habitquest.ui.Welcome
 import com.ayushpant.habitquest.ui.WelcomeScreen
+import com.ayushpant.habitquest.ui.GuideAction
+import com.ayushpant.habitquest.ui.GuideScreen
 import com.ayushpant.habitquest.ui.ZonesScreen
 import kotlinx.coroutines.launch
 import com.ayushpant.habitquest.ui.HabitQuestTheme
@@ -131,6 +133,20 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         composable("zones") { ZonesScreen(repo, onBack = { nav.popBackStack() }) }
+                        composable("guide") {
+                            GuideScreen(onBack = { nav.popBackStack() }) { action ->
+                                when (action) {
+                                    GuideAction.ADD_HABIT -> nav.navigate("habit/0")
+                                    GuideAction.ADD_TASK -> nav.navigate("task/0")
+                                    GuideAction.PLACES -> nav.navigate("zones")
+                                    GuideAction.SETTINGS -> nav.popBackStack()
+                                    GuideAction.SUMMARY, GuideAction.HISTORY -> nav.navigate(if (action == GuideAction.SUMMARY) "summary" else "history") {
+                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                        launchSingleTop = true
+                                    }
+                                }
+                            }
+                        }
                         composable("settings") {
                             SettingsScreen(
                                 app.reminders,
@@ -138,6 +154,7 @@ class MainActivity : ComponentActivity() {
                                 onZones = { nav.navigate("zones") },
                                 onPermissionsChanged = { app.rescheduleReminders() },
                                 onShowWelcome = { nav.navigate("welcome") },
+                                onGuide = { nav.navigate("guide") },
                             )
                         }
                         // id 0 = new item; the editor then shows the Habit | Task switch.
