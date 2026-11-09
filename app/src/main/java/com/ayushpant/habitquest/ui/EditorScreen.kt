@@ -84,7 +84,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     var windowStart by remember { mutableStateOf(LocalTime.of(7, 0)) }
     var windowEnd by remember { mutableStateOf(LocalTime.of(8, 0)) }
     var daysMask by remember { mutableStateOf(EVERY_DAY_MASK) }
-    // App habit (Step 3): opens and watches an app, e.g. Medito.
+    // App habit (Step 3): opens and watches an app, e.g. a meditation app.
     var habitType by remember { mutableStateOf(HabitType.MANUAL) }
     var sourcePackage by remember { mutableStateOf<String?>(null) }
     var pickingApp by remember { mutableStateOf(false) }
@@ -330,7 +330,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
         AppPickerDialog(
             onPick = { app ->
                 sourcePackage = app.packageName
-                if (name.isBlank() && app.label.contains("medito", ignoreCase = true)) {
+                if (name.isBlank() && isMeditationApp(app)) {
                     name = "Meditate"
                     if (!dimsTouched) dims = suggestDimensions(name)
                 }

@@ -129,6 +129,10 @@ class ReminderRepository(
             logs.map { LogLine(toLocal(it.dueAt), it.habitId?.let { id -> names[id] } ?: "Checklist", it.kind, it.result) }
         }
 
+    /** Active habits done with an app, for the set-up guide in Settings. */
+    fun observeAppHabits(): Flow<List<com.ayushpant.habitquest.data.Habit>> =
+        db.habits().observeActive().map { list -> list.filter { it.type == com.ayushpant.habitquest.data.HabitType.APP && it.sourcePackage != null } }
+
     /** Where the user last dragged the popup (pixels from the top), or null for the default place. */
     suspend fun popupY(): Int? = db.appState().get(KEY_POPUP_Y)?.toIntOrNull()
 

@@ -29,14 +29,25 @@ import kotlinx.coroutines.withContext
 /** An app on the phone that can be opened. */
 data class InstalledApp(val label: String, val packageName: String)
 
-/** Every app with a launcher icon, sorted by name. Medito-like apps first, since that is v1's app habit. */
+private val MEDITATION_WORDS = listOf(
+    "medit", "mindful", "headspace", "calm", "insight timer", "balance", "waking up", "breath", "breethe",
+    "smiling mind", "petit bambou", "oak", "aura", "ten percent", "prana", "sattva", "simple habit",
+)
+
+/** True for apps that look like meditation apps (by name or package), e.g. Medito, Headspace, Calm. */
+fun isMeditationApp(app: InstalledApp): Boolean {
+    val text = (app.label + " " + app.packageName).lowercase()
+    return MEDITATION_WORDS.any { it in text }
+}
+
+/** Every app with a launcher icon, sorted by name. Meditation apps come first, since they are the usual app habit. */
 suspend fun loadInstalledApps(context: Context): List<InstalledApp> = withContext(Dispatchers.IO) {
     val pm = context.packageManager
     pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
         .map { InstalledApp(it.loadLabel(pm).toString(), it.activityInfo.packageName) }
         .filter { it.packageName != context.packageName }
         .distinctBy { it.packageName }
-        .sortedWith(compareByDescending<InstalledApp> { it.label.contains("medito", ignoreCase = true) }.thenBy { it.label.lowercase() })
+        .sortedWith(compareByDescending<InstalledApp> { isMeditationApp(it) }.thenBy { it.label.lowercase() })
 }
 
 fun appLabel(context: Context, packageName: String): String? = runCatching {

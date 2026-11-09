@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -122,7 +123,7 @@ fun SettingsScreen(reminders: ReminderRepository) {
                 }
                 PermissionRow(
                     title = "Notification access",
-                    why = "Lets Habit Quest see when an app habit's app (e.g. Medito) plays audio, to suggest the session. " +
+                    why = "Lets Habit Quest see when an app habit's app (e.g. your meditation app) plays audio, to suggest the session. " +
                         "It does not read your notifications. If the switch is greyed out: App info → ⋮ → Allow restricted settings.",
                     granted = listener,
                     action = "Open setting",
@@ -144,6 +145,10 @@ fun SettingsScreen(reminders: ReminderRepository) {
                 OutlinedButton(onClick = { PopupPresenter.showTest(context) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Show a test popup")
                 }
+            }
+
+            Section("Track a habit with an app") {
+                AppHabitGuide(reminders, notificationAccess = listener, popups = overlay)
             }
 
             val s = settings ?: return@Column
@@ -192,6 +197,57 @@ fun SettingsScreen(reminders: ReminderRepository) {
             }
 
             Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/**
+ * Step-by-step set-up for app habits, with a live ✓ for each step. Works with any app that plays
+ * audio: Medito, Headspace, Calm, Insight Timer, a podcast or music app, …
+ */
+@Composable
+private fun AppHabitGuide(reminders: ReminderRepository, notificationAccess: Boolean, popups: Boolean) {
+    val context = LocalContext.current
+    val appHabits by reminders.observeAppHabits().collectAsStateWithLifecycle(initialValue = emptyList())
+    Text(
+        "Habit Quest can notice when you use an app for a habit, for example a meditation app, " +
+            "and ask you to confirm the session. Nothing is checked off without your tap.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    GuideStep(1, notificationAccess, "Allow Notification access (above).",
+        "It lets Habit Quest see when an app starts and stops playing audio. It does not read your notifications.")
+    GuideStep(2, appHabits.isNotEmpty(), "Link the habit to its app.",
+        if (appHabits.isEmpty()) "Today → tap ✏️ on the habit (or + for a new one) → \"How do you do it?\" → With an app → Choose the app."
+        else appHabits.joinToString("\n") { "${it.name} → ${appLabel(context, it.sourcePackage!!) ?: it.sourcePackage}" })
+    GuideStep(3, popups, "Allow Display over other apps (above).",
+        "So the \"Did you do it?\" question can appear over the app. Without it, it comes as a notification.")
+    GuideStep(4, null, "Use the app as usual.",
+        "Start it from the habit's tile or open it directly. About a minute after the audio stops, you are asked: " +
+            "Confirm ✓ or Not done. 5 min or more of audio gives the ×1.2 evidence bonus; under 2 min is ignored.")
+    Text(
+        "Works with apps that play audio with a media control (most meditation, sleep and podcast apps). " +
+            "Apps that only show text or a timer cannot be detected yet: tick those by hand.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+}
+
+/** One numbered step. [done]: true ✓, false ✗, null = nothing to check. */
+@Composable
+private fun GuideStep(number: Int, done: Boolean?, title: String, detail: String) {
+    Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 4.dp)) {
+        Text(
+            when (done) {
+                true -> "✓"
+                false -> "$number"
+                null -> "$number"
+            },
+            style = MaterialTheme.typography.titleMedium,
+            color = if (done == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.width(28.dp),
+        )
+        Column {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = if (done == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+            Text(detail, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

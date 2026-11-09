@@ -107,6 +107,18 @@ class SummaryRenderTest {
     }
 
     @Test
+    fun renderSettings() {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries().build()
+        val repo = HabitRepository(db)
+        val reminders = com.ayushpant.habitquest.reminders.ReminderRepository(db, repo)
+        compose.setContent { HabitQuestTheme { SettingsScreen(reminders) } }
+        compose.mainClock.advanceTimeBy(1_000)
+        save(File("build/render").apply { mkdirs() }, "settings.png")
+        db.close()
+    }
+
+    @Test
     fun renderPromise() {
         val out = File("build/render").apply { mkdirs() }
         val ctx = PromiseContext(logId = 1, habitId = 1, habitName = "Meditate", suggestedTime = LocalTime.of(7, 0), priorMisses = 2, oathRequired = true)
