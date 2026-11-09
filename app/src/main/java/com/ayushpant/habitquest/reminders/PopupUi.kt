@@ -126,15 +126,13 @@ private fun ReminderContent(
             OutlinedButton(onClick = { act { reminders.done(model.logId, model.habitId) } }, modifier = Modifier.weight(1f)) {
                 Text("Already done")
             }
-            OutlinedButton(onClick = { act { reminders.snooze(model.logId, model.habitId) } }, modifier = Modifier.weight(1f)) {
-                Text("Snooze ${ReminderConfig.DEFAULT.snoozeMinutes} min")
+            if (model.canSnooze) {
+                OutlinedButton(onClick = { act { reminders.snooze(model.logId, model.habitId) } }, modifier = Modifier.weight(1f)) {
+                    Text("Snooze ${ReminderConfig.DEFAULT.snoozeMinutes} min")
+                }
             }
         }
-        if (model.kind == ReminderKind.LAST_CHANCE) {
-            TextButton(onClick = { promising = true }) { Text("Can't today") }
-        } else {
-            TextButton(onClick = { act { reminders.skip(model.logId, model.habitId, promised = false) } }) { Text("Skip today") }
-        }
+        TextButton(onClick = { promising = true }) { Text("Can't today") }
         if (model.tasks.isNotEmpty()) {
             HorizontalDivider()
             Text("Tasks to keep in mind", style = MaterialTheme.typography.titleSmall)

@@ -96,9 +96,13 @@ class ReminderReceiver : BroadcastReceiver() {
             ReminderScheduler.setAlarm(context, app.reminders.retryMillis())
             return@runAsync
         }
-        val ids = app.reminders.takeDue()
-        if (ids.isNotEmpty()) PopupPresenter.show(context, ids)
-        ReminderScheduler.reschedule(context)
+        try {
+            val ids = app.reminders.takeDue()
+            if (ids.isNotEmpty()) PopupPresenter.show(context, ids)
+        } finally {
+            // Always set the next alarm, even if showing failed: otherwise all later reminders are lost.
+            ReminderScheduler.reschedule(context)
+        }
     }
 }
 
@@ -135,13 +139,18 @@ object PopupPresenter {
 
     suspend fun show(context: Context, logIds: List<Long>) {
         if (ReminderScheduler.canDrawOverlays(context)) {
-            PopupService.start(context, logIds.toLongArray())
-        } else {
-            val app = context.applicationContext as HabitQuestApp
-            for (id in logIds) {
-                val model = app.reminders.popupFor(id) ?: continue
-                notify(context, id, model)
+            try {
+                PopupService.start(context, logIds.toLongArray())
+                return
+            } catch (e: Exception) {
+                // e.g. Android refused to start the popup service from the background.
+                Log.w(LOG_TAG, "Popup service could not start, using notifications", e)
             }
+        }
+        val app = context.applicationContext as HabitQuestApp
+        for (id in logIds) {
+            val model = app.reminders.popupFor(id) ?: continue
+            notify(context, id, model)
         }
     }
 

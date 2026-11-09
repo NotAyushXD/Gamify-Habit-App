@@ -44,6 +44,8 @@ sealed interface PopupModel {
         val promisedYesterday: Boolean,
         /** Open tasks, only on the first reminder popup of the day. */
         val tasks: List<TaskLine>,
+        /** False when another snooze would go over the daily reminder limit. */
+        val canSnooze: Boolean = true,
     ) : PopupModel
 
     data class Checklist(
@@ -161,6 +163,10 @@ class ReminderRepository(
         val habit = db.habits().get(log.habitId ?: return null) ?: return null
         val promised = db.skips().getForDay(log.day.minusDays(1)).any { it.habitId == habit.id && it.promised }
         val withTasks = db.appState().get(KEY_TASKS_POPUP + log.day) == logId.toString()
+        val todayLogs = db.reminders().getForDay(log.day).filter { it.habitId == habit.id }
+            .map { PlanLog(it.id, it.habitId, it.kind, toLocal(it.dueAt), it.result) }
+        val canSnooze = log.kind != ReminderKind.LAST_CHANCE &&
+            startAndSnoozeLeft(habit.windowStart, habit.windowEnd, todayLogs, settings().toRules()) > 0
         return PopupModel.Reminder(
             logId = logId,
             habitId = habit.id,
@@ -170,6 +176,7 @@ class ReminderRepository(
             kind = log.kind,
             promisedYesterday = promised,
             tasks = if (withTasks) db.tasks().getOpen().take(config.tasksOnFirstPopup).map { it.toLine(log.day) } else emptyList(),
+            canSnooze = canSnooze,
         )
     }
 

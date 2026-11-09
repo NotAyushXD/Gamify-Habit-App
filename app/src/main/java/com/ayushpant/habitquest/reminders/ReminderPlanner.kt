@@ -61,6 +61,17 @@ fun inQuietHours(t: LocalTime, rules: ReminderRules): Boolean {
 private val SHOWN_RESULTS = ReminderResult.entries - setOf(ReminderResult.PENDING, ReminderResult.SUPPRESSED)
 
 /**
+ * How many window-start and snooze reminders a habit may still get today. One slot of the daily
+ * limit is kept for the last-chance reminder, so snoozing can never take away the last chance.
+ */
+fun startAndSnoozeLeft(windowStart: LocalTime, windowEnd: LocalTime, logs: List<PlanLog>, rules: ReminderRules): Int {
+    val hasLastChance = windowEnd.minusMinutes(rules.config.lastChanceMinutes) > windowStart && rules.maxPerHabit >= 2
+    val cap = rules.maxPerHabit - if (hasLastChance) 1 else 0
+    val used = logs.count { it.kind in setOf(ReminderKind.START, ReminderKind.SNOOZE) && it.result in SHOWN_RESULTS }
+    return (cap - used).coerceAtLeast(0)
+}
+
+/**
  * Every popup for [day] that still needs handling: the window-start reminder, the last-chance
  * reminder, waiting snoozes, and the 11 PM checklist.
  */
@@ -77,18 +88,21 @@ fun planDay(
     for (h in habits) {
         if (!h.scheduled || h.done || h.skipped) continue
         val mine = logs.filter { it.habitId == h.id }
-        if (mine.count { it.result in SHOWN_RESULTS } >= rules.maxPerHabit) continue // spec 6.2: max 3 a day
         val windowEnd = day.atTime(h.windowEnd)
+        // Spec 6.2: max 3 reminders a day (start + snoozes + last chance together).
+        val left = startAndSnoozeLeft(h.windowStart, h.windowEnd, mine, rules)
 
-        if (mine.none { it.kind == ReminderKind.START }) {
+        if (left > 0 && mine.none { it.kind == ReminderKind.START }) {
             planned += Planned(h.id, ReminderKind.START, day.atTime(h.windowStart), windowEnd)
         }
         val lastChance = h.windowEnd.minusMinutes(cfg.lastChanceMinutes)
-        if (lastChance > h.windowStart && mine.none { it.kind == ReminderKind.LAST_CHANCE }) {
+        if (lastChance > h.windowStart && rules.maxPerHabit >= 2 && mine.none { it.kind == ReminderKind.LAST_CHANCE }) {
             planned += Planned(h.id, ReminderKind.LAST_CHANCE, day.atTime(lastChance), windowEnd)
         }
-        for (snooze in mine.filter { it.kind == ReminderKind.SNOOZE && it.result == ReminderResult.PENDING }) {
-            planned += Planned(h.id, ReminderKind.SNOOZE, snooze.dueAt, endOfDay, snooze.id)
+        if (left > 0) {
+            for (snooze in mine.filter { it.kind == ReminderKind.SNOOZE && it.result == ReminderResult.PENDING }) {
+                planned += Planned(h.id, ReminderKind.SNOOZE, snooze.dueAt, endOfDay, snooze.id)
+            }
         }
     }
 

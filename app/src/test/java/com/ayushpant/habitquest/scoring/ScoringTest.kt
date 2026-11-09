@@ -152,21 +152,22 @@ class ScoringTest {
     }
 
     @Test
-    fun `spec 12_3 - miss 2 days - freeze then decay`() {
+    fun `spec 12_3 - miss 2 days - freeze, then the streak resets to 0`() {
         var s = StreakState(currentDays = 10, bestDays = 10)
-        s = closeDay(s, mon, DayOutcome.MISSED)               // freeze
-        s = closeDay(s, mon.plusDays(1), DayOutcome.MISSED)   // decay 10 → 5
-        assertEquals(5, s.currentDays)
-        assertEquals(10, s.bestDays)
+        s = closeDay(s, mon, DayOutcome.MISSED)               // freeze: 10 kept
+        assertEquals(10, s.currentDays)
+        s = closeDay(s, mon.plusDays(1), DayOutcome.MISSED)   // no freeze left: reset
+        assertEquals(0, s.currentDays)
+        assertEquals(10, s.bestDays)                          // the best streak is remembered
         assertTrue(s.comebackPending)
     }
 
     @Test
-    fun `decay never takes the streak to 0`() {
+    fun `after a reset the streak starts again from 1`() {
         var s = StreakState(currentDays = 3, freezeWeek = mon, freezesUsed = 1)
-        s = closeDay(s, mon.plusDays(1), DayOutcome.MISSED) // 3 → 1
-        assertEquals(1, s.currentDays)
-        s = closeDay(s, mon.plusDays(2), DayOutcome.MISSED) // 1 → stays 1
+        s = closeDay(s, mon.plusDays(1), DayOutcome.MISSED)
+        assertEquals(0, s.currentDays)
+        s = closeDay(s, mon.plusDays(2), DayOutcome.DONE)
         assertEquals(1, s.currentDays)
     }
 

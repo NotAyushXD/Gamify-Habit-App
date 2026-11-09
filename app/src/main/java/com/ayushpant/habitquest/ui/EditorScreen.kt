@@ -26,7 +26,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,7 +50,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import kotlin.math.roundToInt
 
 private val HHMM = DateTimeFormatter.ofPattern("HH:mm")
 private val DUE_DATE = DateTimeFormatter.ofPattern("EEE d MMM yyyy")
@@ -74,7 +72,6 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     // `remember { mutableStateOf(...) }` is a variable that redraws the screen when it changes.
     var kind by remember { mutableStateOf(initialKind) }
     var name by remember { mutableStateOf("") }
-    var basePoints by remember { mutableStateOf(cfg.defaultBasePoints) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     // Habit fields
@@ -96,7 +93,6 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 name = h.name
                 windowStart = h.windowStart
                 windowEnd = h.windowEnd
-                basePoints = h.basePoints
                 daysMask = h.daysMask
                 creatureLine = h.creatureLine
             }
@@ -104,7 +100,6 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 loadedTask = t
                 name = t.name
                 dueDate = t.dueDate
-                basePoints = t.basePoints
             }
         }
     }
@@ -215,15 +210,11 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 }
             }
 
-            Column {
-                Text("Base points: $basePoints", style = MaterialTheme.typography.titleSmall)
-                Slider(
-                    value = basePoints.toFloat(),
-                    onValueChange = { basePoints = it.roundToInt() },
-                    valueRange = cfg.minBasePoints.toFloat()..cfg.maxBasePoints.toFloat(),
-                    steps = cfg.maxBasePoints - cfg.minBasePoints - 1,
-                )
-            }
+            Text(
+                "Every habit and task is worth the same ${cfg.basePoints} base points, so the score stays fair. " +
+                    "Timing, streaks and bonuses decide the rest.",
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             if (kind == ItemKind.HABIT) {
                 Column {
@@ -254,21 +245,21 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                         when (kind) {
                             ItemKind.HABIT -> {
                                 val base = loadedHabit ?: Habit(
-                                    name = "", windowStart = windowStart, windowEnd = windowEnd, basePoints = basePoints,
+                                    name = "", windowStart = windowStart, windowEnd = windowEnd, basePoints = cfg.basePoints,
                                     creatureLine = creatureLine, daysMask = daysMask, createdDate = LocalDate.now(),
                                 )
                                 repo.saveHabit(
                                     base.copy(
                                         name = name.trim(), windowStart = windowStart, windowEnd = windowEnd,
-                                        basePoints = basePoints, daysMask = daysMask, creatureLine = creatureLine,
+                                        daysMask = daysMask, creatureLine = creatureLine,
                                     )
                                 )
                             }
                             ItemKind.TASK -> {
                                 val base = loadedTask ?: Task(
-                                    name = "", dueDate = dueDate, basePoints = basePoints, createdDate = LocalDate.now(),
+                                    name = "", dueDate = dueDate, basePoints = cfg.basePoints, createdDate = LocalDate.now(),
                                 )
-                                repo.saveTask(base.copy(name = name.trim(), dueDate = dueDate, basePoints = basePoints))
+                                repo.saveTask(base.copy(name = name.trim(), dueDate = dueDate))
                             }
                         }
                         onDone()

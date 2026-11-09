@@ -14,6 +14,7 @@ import com.ayushpant.habitquest.scoring.isScheduledOn
 import com.ayushpant.habitquest.scoring.daysLate
 import com.ayushpant.habitquest.scoring.scoreHabitDay
 import com.ayushpant.habitquest.scoring.taskPoints
+import com.ayushpant.habitquest.scoring.weekStart
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import java.time.Clock
@@ -33,6 +34,8 @@ data class HabitToday(
     val done: List<Session>,
     /** Streak including today, once today is done. */
     val streakDays: Int,
+    /** This week's freeze was used: the next miss resets the streak. */
+    val freezeUsed: Boolean = false,
     /** Set when the user chose "Skip today" or "Can't today". */
     val skip: HabitSkip? = null,
 ) {
@@ -111,13 +114,15 @@ class HabitRepository(
             habits = habits.map { habit ->
                 val mine = sessions.filter { it.habitId == habit.id }
                 val done = mine.filter { it.status == SessionStatus.CONFIRMED }
-                val stored = streakByHabit[habit.id]?.currentDays ?: 0
+                val row = streakByHabit[habit.id]
+                val stored = row?.currentDays ?: 0
                 HabitToday(
                     habit = habit,
                     scheduledToday = isScheduledOn(habit.daysMask, day),
                     inProgress = mine.firstOrNull { it.status == SessionStatus.SUGGESTED && it.endTime == null },
                     done = done,
                     streakDays = if (done.isNotEmpty()) stored + 1 else stored,
+                    freezeUsed = row != null && row.freezeWeek == weekStart(day) && row.freezesUsed >= cfg.freezesPerWeek,
                 )
             },
             dailyBonus = bonus?.points ?: 0,
@@ -127,7 +132,7 @@ class HabitRepository(
                     TaskToday(
                         task = t,
                         daysLate = daysLate(t.dueDate, doneOn),
-                        points = if (t.doneDay != null) t.points else taskPoints(t.basePoints, t.dueDate, day, cfg),
+                        points = if (t.doneDay != null) t.points else taskPoints(cfg.basePoints, t.dueDate, day, cfg),
                     )
                 }
                 .sortedBy { it.isDone },
@@ -143,7 +148,7 @@ class HabitRepository(
 
     /** Inserts a new habit (id = 0) or updates an existing one. Returns the id. */
     suspend fun saveHabit(habit: Habit): Long {
-        val clean = habit.copy(basePoints = habit.basePoints.coerceIn(cfg.minBasePoints, cfg.maxBasePoints))
+        val clean = habit.copy(basePoints = cfg.basePoints) // fixed for everyone
         closePendingDays()
         return db.withTransaction {
             val id = if (clean.id == 0L) {
@@ -174,11 +179,11 @@ class HabitRepository(
 
     /** Inserts a new task (id = 0) or updates one. A done task is scored again for its new due date. */
     suspend fun saveTask(task: Task): Long {
-        val clean = task.copy(basePoints = task.basePoints.coerceIn(cfg.minBasePoints, cfg.maxBasePoints))
+        val clean = task.copy(basePoints = cfg.basePoints) // fixed for everyone
         return if (clean.id == 0L) {
             db.tasks().insert(clean.copy(createdDate = today()))
         } else {
-            val points = clean.doneDay?.let { taskPoints(clean.basePoints, clean.dueDate, it, cfg) } ?: 0
+            val points = clean.doneDay?.let { taskPoints(cfg.basePoints, clean.dueDate, it, cfg) } ?: 0
             db.tasks().update(clean.copy(points = points))
             clean.id
         }.also { onChange() }
@@ -190,7 +195,7 @@ class HabitRepository(
         if (t.doneDay != null) return
         val day = today()
         db.tasks().update(
-            t.copy(doneDay = day, doneAt = clock.millis(), points = taskPoints(t.basePoints, t.dueDate, day, cfg))
+            t.copy(doneDay = day, doneAt = clock.millis(), points = taskPoints(cfg.basePoints, t.dueDate, day, cfg))
         )
         onChange()
     }
@@ -322,7 +327,7 @@ class HabitRepository(
     /** Scores one habit's confirmed sessions on [day], given the streak after the day before. */
     private suspend fun rescoreHabitDay(habit: Habit, day: LocalDate, closedStreak: StreakState) {
         val scores = scoreHabitDay(
-            habit = HabitRules(habit.basePoints, habit.windowStart, habit.windowEnd),
+            habit = HabitRules(cfg.basePoints, habit.windowStart, habit.windowEnd),
             closedStreak = closedStreak,
             confirmed = db.sessions().getConfirmed(habit.id, day)
                 .map { SessionInput(it.id, localTimeOf(it.startTime), it.evidenceFound) },
@@ -416,6 +421,7 @@ class HabitRepository(
         }
         // The streak changed, so today's sessions (if any) get the new multiplier.
         if (closed > 0) db.withTransaction { rescoreDay(today()) }
+        applyRuleChanges()
         db.signals().deleteOlderThan(clock.millis() - Duration.ofDays(SIGNAL_LOG_DAYS).toMillis())
         return closed
     }
@@ -439,6 +445,21 @@ class HabitRepository(
         }
     }
 
+    /**
+     * When the streak rules change (v0.4: a miss after the freeze resets to 0), the stored
+     * streaks were made with the old rules. This walks every habit once with the new rules.
+     * Points of past days stay as they are; only today is scored again.
+     */
+    private suspend fun applyRuleChanges() {
+        val done = db.appState().get(KEY_RULES_VERSION)?.toIntOrNull() ?: 1
+        if (done >= RULES_VERSION) return
+        db.withTransaction {
+            for (habit in db.habits().getActive()) replayHabit(habit.id, today())
+            db.appState().put(AppState(KEY_RULES_VERSION, RULES_VERSION.toString()))
+        }
+        Log.i(LOG_TAG, "Streaks recalculated with rules v$RULES_VERSION")
+    }
+
     suspend fun recordTaskRun(task: String) {
         db.appState().put(AppState("task_last_run.$task", Instant.now(clock).toString()))
     }
@@ -449,6 +470,9 @@ class HabitRepository(
 
     private companion object {
         const val KEY_LAST_CLOSED = "last_closed_day"
+        const val KEY_RULES_VERSION = "streak_rules_version"
+        /** Raise this when the streak rules change, so stored streaks are walked again. */
+        const val RULES_VERSION = 2
         const val SIGNAL_LOG_DAYS = 14L
     }
 }

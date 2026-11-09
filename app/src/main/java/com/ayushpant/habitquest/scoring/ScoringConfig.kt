@@ -9,10 +9,9 @@ import java.time.LocalTime
  * and nowhere else. Tests can pass a modified copy, e.g. `ScoringConfig(dailyBonus = 20)`.
  */
 data class ScoringConfig(
-    // 7.1 Base points
-    val defaultBasePoints: Int = 10,
-    val minBasePoints: Int = 5,
-    val maxBasePoints: Int = 20,
+    // 7.1 Base points: the same for every habit and task. Not user-adjustable, so the points
+    // stay fair and cannot be inflated (decision after the spec, which allowed 5–20).
+    val basePoints: Int = 10,
 
     // 7.1 Timing factor
     val timingInWindow: Double = 1.0,
@@ -32,10 +31,9 @@ data class ScoringConfig(
         1 to 1.0,
     ),
 
-    // 7.3 Missed days
+    // 7.3 Missed days: the first misses of a week use a freeze (streak kept); any other miss
+    // resets the streak to 0 (decision after the spec, which halved it and never went below 1).
     val freezesPerWeek: Int = 1,
-    val decayDivisor: Int = 2,
-    val streakFloorAfterDecay: Int = 1,
     val comebackBonus: Int = 5,
 
     // 7.4 Daily bonus (habits only; tasks never count toward it)

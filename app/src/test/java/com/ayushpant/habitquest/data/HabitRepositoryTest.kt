@@ -78,7 +78,7 @@ class HabitRepositoryTest {
     }
 
     @Test
-    fun `day close catches up after days with no run - freeze, decay, comeback`() = runBlocking {
+    fun `day close catches up after days with no run - freeze, reset, comeback`() = runBlocking {
         val id = newHabit()
         setTime(monday, 7, 0); repo.tickHabit(id)   // Mon: done, streak 1
         setTime(monday.plusDays(1), 7, 0); repo.tickHabit(id) // Tue: done, streak 2
@@ -88,12 +88,13 @@ class HabitRepositoryTest {
         assertEquals(4, repo.closePendingDays())
 
         val streak = db.streaks().get(id)!!
-        assertEquals(1, streak.currentDays)      // Wed freeze (2), Thu decay (1), Fri stays 1
+        assertEquals(0, streak.currentDays)      // Wed freeze (2), Thu reset (0), Fri stays 0
         assertEquals(2, streak.bestDays)
         assertTrue(streak.comebackPending)
 
         setTime(monday.plusDays(5), 7, 0); repo.tickHabit(id)
-        // streak 2 → 1.0; comeback +5
+        assertEquals(1, habitToday(id).streakDays) // starts again
+        // streak 1 → 1.0; comeback +5
         assertEquals(15, habitToday(id).points)
         assertEquals(5, habitToday(id).done.single().bonusPoints)
     }
@@ -328,5 +329,18 @@ class HabitRepositoryTest {
         setTime(monday.plusDays(2), 9, 0)
         repo.closePendingDays()
         assertTrue(db.streaks().get(id)!!.comebackPending)
+    }
+
+    @Test
+    fun `old streaks are walked once with the new reset rule`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        setTime(monday.plusDays(1), 7, 0); repo.tickHabit(id)
+        setTime(monday.plusDays(5), 9, 0); repo.closePendingDays() // streak now 0 under the new rule
+        // Pretend the phone still has an old-rule streak and the rules flag is old.
+        db.streaks().upsert(db.streaks().get(id)!!.copy(currentDays = 1))
+        db.appState().put(AppState("streak_rules_version", "1"))
+        repo.closePendingDays()
+        assertEquals(0, db.streaks().get(id)!!.currentDays)
     }
 }

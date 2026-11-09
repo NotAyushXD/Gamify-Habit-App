@@ -145,7 +145,7 @@ fun dayOutcome(done: Boolean, scheduled: Boolean, isCreationDay: Boolean): DayOu
 
 fun weekStart(date: LocalDate): LocalDate = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 
-/** Spec 7.3: applies one closed day to the streak (done, freeze, or decay). */
+/** Applies one closed day to the streak: done (+1), a miss with a freeze left (kept), or a miss (reset to 0). */
 fun closeDay(
     state: StreakState,
     date: LocalDate,
@@ -173,10 +173,7 @@ fun closeDay(
                 freezesUsed = usedThisWeek + 1,
                 comebackPending = true,
             )
-            else -> state.copy(
-                currentDays = maxOf(cfg.streakFloorAfterDecay, state.currentDays / cfg.decayDivisor),
-                comebackPending = true,
-            )
+            else -> state.copy(currentDays = 0, comebackPending = true)
         }
     }
 }

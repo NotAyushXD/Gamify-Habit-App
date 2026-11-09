@@ -57,12 +57,24 @@ class ReminderPlannerTest {
     }
 
     @Test
-    fun `spec 6_2 - at most 3 reminders for a habit a day`() {
+    fun `spec 6_2 - at most 3 reminders a day, and snoozes never take the last chance`() {
         val logs = listOf(
             log(1, ReminderKind.START, ReminderResult.SNOOZED),
             log(2, ReminderKind.SNOOZE, ReminderResult.SNOOZED),
-            log(3, ReminderKind.SNOOZE, ReminderResult.SNOOZED),
-            log(4, ReminderKind.SNOOZE, ReminderResult.PENDING, dueAt = at(7, 10)),
+            log(3, ReminderKind.SNOOZE, ReminderResult.PENDING, dueAt = at(7, 10)),
+        )
+        // Start + 1 snooze used 2 of 3; the third slot is kept for the last chance.
+        val planned = planDay(day, listOf(meditate), logs, rules.copy(checklistEnabled = false))
+        assertEquals(listOf(ReminderKind.LAST_CHANCE), planned.map { it.kind })
+        assertEquals(0, startAndSnoozeLeft(meditate.windowStart, meditate.windowEnd, logs, rules))
+    }
+
+    @Test
+    fun `nothing more after the last chance was shown`() {
+        val logs = listOf(
+            log(1, ReminderKind.START, ReminderResult.SNOOZED),
+            log(2, ReminderKind.SNOOZE, ReminderResult.CLOSED),
+            log(3, ReminderKind.LAST_CHANCE, ReminderResult.CLOSED),
         )
         assertTrue(planDay(day, listOf(meditate), logs, rules.copy(checklistEnabled = false)).isEmpty())
     }

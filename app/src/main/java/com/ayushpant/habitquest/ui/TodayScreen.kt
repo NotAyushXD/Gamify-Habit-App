@@ -281,7 +281,8 @@ private fun HabitTile(
             Column(Modifier.weight(1f)) {
                 Text(h.habit.name, style = MaterialTheme.typography.titleMedium)
                 val window = "${h.habit.windowStart.format(HHMM)}–${h.habit.windowEnd.format(HHMM)}"
-                val streak = if (h.streakDays > 0) "  ·  🔥 ${h.streakDays}" else ""
+                val freeze = if (h.freezeUsed && h.streakDays > 0) " · ❄️ freeze used" else ""
+                val streak = if (h.streakDays > 0) "  ·  🔥 ${h.streakDays}$freeze" else ""
                 Text(window + streak, style = MaterialTheme.typography.bodyMedium)
                 val status = when {
                     firstDone != null -> {
