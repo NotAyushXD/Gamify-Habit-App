@@ -118,4 +118,23 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 4 to 5 keeps habits and adds zones`() = runBlocking {
+        createDatabaseAtVersion(4).apply {
+            execSQL(
+                "INSERT INTO habit (id, name, type, window_start, window_end, base_points, creature_line, days_mask, created_date, active, mbs_mask) " +
+                    "VALUES (1, 'Gym', 'MANUAL', '18:00', '19:00', 10, 'STRONG', 127, '2026-11-04', 1, 3)"
+            )
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            assertEquals(3, db.habits().get(1)!!.mbsMask)
+            val id = db.zones().insert(Zone(name = "Gym", latitude = 1.0, longitude = 2.0, radiusM = 200))
+            assertEquals("Gym", db.zones().get(id)!!.name)
+        } finally {
+            db.close()
+        }
+    }
 }

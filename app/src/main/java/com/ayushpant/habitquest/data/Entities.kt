@@ -189,3 +189,16 @@ data class Promise(
     @ColumnInfo(name = "oath_text") val oathText: String? = null,
     val status: PromiseStatus = PromiseStatus.OPEN,
 )
+
+// ---- Added in database version 5 (Step 4: zone habits) ----------------------------------------------
+
+/** A place for zone habits, e.g. the gym (spec 1.1, 10). [radiusM] is 150 or more. */
+@Entity(tableName = "zone")
+data class Zone(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val latitude: Double,
+    val longitude: Double,
+    @ColumnInfo(name = "radius_m") val radiusM: Int,
+    val active: Boolean = true,
+)

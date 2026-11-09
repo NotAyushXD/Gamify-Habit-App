@@ -74,6 +74,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.play.services.location) // zone habits: geofencing (spec 4, 5.3)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric) // runs Android code (here: Room) on the Mac

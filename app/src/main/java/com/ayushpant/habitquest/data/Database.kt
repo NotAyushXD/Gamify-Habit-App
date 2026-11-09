@@ -177,6 +177,24 @@ interface PromiseDao {
 }
 
 @Dao
+interface ZoneDao {
+    @Query("SELECT * FROM zone WHERE active = 1 ORDER BY name")
+    fun observeActive(): Flow<List<Zone>>
+
+    @Query("SELECT * FROM zone WHERE active = 1")
+    suspend fun getActive(): List<Zone>
+
+    @Query("SELECT * FROM zone WHERE id = :id")
+    suspend fun get(id: Long): Zone?
+
+    @Insert
+    suspend fun insert(zone: Zone): Long
+
+    @Update
+    suspend fun update(zone: Zone)
+}
+
+@Dao
 interface StreakDao {
     @Query("SELECT * FROM streak")
     fun observeAll(): Flow<List<Streak>>
@@ -236,13 +254,13 @@ class Converters {
 }
 
 @Database(
-    version = 4,
+    version = 5,
     entities = [
         Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
-        Settings::class, ReminderLog::class, HabitSkip::class, Promise::class,
+        Settings::class, ReminderLog::class, HabitSkip::class, Promise::class, Zone::class,
     ],
     // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -258,6 +276,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reminders(): ReminderLogDao
     abstract fun skips(): HabitSkipDao
     abstract fun promises(): PromiseDao
+    abstract fun zones(): ZoneDao
 
     companion object {
         fun create(context: Context): AppDatabase =

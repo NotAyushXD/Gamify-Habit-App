@@ -69,6 +69,14 @@ data class ScoringConfig(
     /** How far back the catch-up looks the first time (Android keeps a few days). */
     val catchUpLookbackHours: Long = 48,
 
+    // Zone habits (spec 5.3).
+    /** Staying in the zone this long counts as "arrived" (dwell); driving past does not. */
+    val zoneDwellMinutes: Long = 5,
+    /** This much time in the zone is "evidence" for the ×1.2 evidence factor. */
+    val zoneEvidenceMinutes: Long = 30,
+    /** Smallest zone radius (spec 1.1: 150 m or more; geofences are not precise below that). */
+    val minZoneRadiusMeters: Int = 150,
+
     // Levels (decision after the spec, brought forward from Step 5): lifetime points give a level.
     // Level n starts at levelStep × n × (n − 1) / 2 points: 0, 50, 150, 300, 500, 750, …
     val levelStep: Int = 50,

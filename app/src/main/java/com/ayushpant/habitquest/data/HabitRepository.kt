@@ -299,7 +299,9 @@ class HabitRepository(
     /** "Done" on a started session. This tap is the user's confirmation. */
     suspend fun finishSession(sessionId: Long) = changeDay(today()) {
         val s = db.sessions().get(sessionId) ?: return@changeDay
-        db.sessions().update(s.copy(endTime = clock.millis(), status = SessionStatus.CONFIRMED))
+        val end = clock.millis()
+        val zoneEvidence = db.habits().get(s.habitId)?.type == HabitType.ZONE && end - s.startTime >= cfg.zoneEvidenceMinutes * 60_000
+        db.sessions().update(s.copy(endTime = end, status = SessionStatus.CONFIRMED, evidenceFound = s.evidenceFound || zoneEvidence))
     }
 
     /** Tick: the user says "I did it", now. They can change the time afterwards. */
@@ -345,6 +347,87 @@ class HabitRepository(
     suspend fun removeSession(sessionId: Long) {
         val s = db.sessions().get(sessionId) ?: return
         changeDay(s.day, s.habitId) { db.sessions().delete(sessionId) }
+    }
+
+    // ---- Zones and zone habits (spec 5.3) ------------------------------------------------------
+
+    fun observeZones(): Flow<List<Zone>> = db.zones().observeActive()
+
+    suspend fun zones(): List<Zone> = db.zones().getActive()
+
+    suspend fun zone(id: Long): Zone? = db.zones().get(id)
+
+    /** Inserts or updates a zone. The radius is never below 150 m (spec 1.1). Returns the id. */
+    suspend fun saveZone(zone: Zone): Long {
+        val clean = zone.copy(name = zone.name.trim(), radiusM = zone.radiusM.coerceAtLeast(cfg.minZoneRadiusMeters))
+        val id = if (clean.id == 0L) db.zones().insert(clean) else clean.id.also { db.zones().update(clean) }
+        onChange()
+        return id
+    }
+
+    /** Removes a zone; its habits become manual (they keep their history and points). */
+    suspend fun deleteZone(id: Long) {
+        val zone = db.zones().get(id) ?: return
+        db.withTransaction {
+            db.zones().update(zone.copy(active = false))
+            for (h in db.habits().getActive().filter { it.zoneId == id }) {
+                db.habits().update(h.copy(type = HabitType.MANUAL, zoneId = null))
+            }
+        }
+        onChange()
+    }
+
+    /** Zones that active zone habits use: the ones to register with the Geofencing API. */
+    suspend fun watchedZones(): List<Zone> {
+        val ids = db.habits().getActive().filter { it.type == HabitType.ZONE }.mapNotNull { it.zoneId }.toSet()
+        return db.zones().getActive().filter { it.id in ids }
+    }
+
+    /**
+     * The user has stayed in [zoneId] for the dwell time (spec 5.3 step 3). Returns the zone habits
+     * to ask about ("At the gym. Are you working out now?"): not done today, not already going on.
+     */
+    suspend fun onZoneDwell(zoneId: Long): List<Habit> {
+        logSignal(SignalKind.GEOFENCE, "dwell zone=$zoneId")
+        val today = today()
+        val sessions = db.sessions().getForDay(today)
+        return db.habits().getActive().filter { h ->
+            h.type == HabitType.ZONE && h.zoneId == zoneId &&
+                sessions.none { it.habitId == h.id && (it.status == SessionStatus.CONFIRMED || (it.status == SessionStatus.SUGGESTED && it.endTime == null)) }
+        }
+    }
+
+    /**
+     * "Yes, I'm working out": the session starts when the user arrived, i.e. the dwell time
+     * before [dwellAt] (the user was already there; generous, spec 2.1).
+     */
+    suspend fun startZoneSession(habitId: Long, dwellAt: Long) = changeDay(today()) {
+        val start = dwellAt - cfg.zoneDwellMinutes * 60_000
+        val open = db.sessions().getForDay(today()).any { it.habitId == habitId && it.status == SessionStatus.SUGGESTED && it.endTime == null }
+        if (!open) {
+            db.sessions().insert(
+                Session(
+                    habitId = habitId, day = today(), startTime = start, endTime = null,
+                    status = SessionStatus.SUGGESTED, source = SessionSource.LIVE, evidenceFound = false,
+                )
+            )
+        }
+    }
+
+    /**
+     * The user left [zoneId] (spec 5.3 step 6). Each zone session going on there ends now and waits
+     * for confirmation. 30 min or more in the zone is evidence. Returns the session ids to confirm.
+     */
+    suspend fun onZoneExit(zoneId: Long, at: Long): List<Long> {
+        logSignal(SignalKind.GEOFENCE, "exit zone=$zoneId")
+        val habits = db.habits().getActive().filter { it.type == HabitType.ZONE && it.zoneId == zoneId }.map { it.id }.toSet()
+        val open = db.sessions().getForDay(today()).filter { it.habitId in habits && it.status == SessionStatus.SUGGESTED && it.endTime == null }
+        for (s in open) {
+            val end = maxOf(at, s.startTime)
+            db.sessions().update(s.copy(endTime = end, evidenceFound = end - s.startTime >= cfg.zoneEvidenceMinutes * 60_000))
+        }
+        if (open.isNotEmpty()) onChange()
+        return open.map { it.id }
     }
 
     // ---- App habits: detected sessions (spec 5.1, 5.2) ------------------------------------------

@@ -539,4 +539,60 @@ class HabitRepositoryTest {
         repo.confirmSuggestion(later)
         assertEquals(6, habitToday(id).points) // 08:00 is within 1 h after 07:30: 0.6; catch-up has no evidence
     }
+
+    // ---- Zone habits (spec 5.3) -------------------------------------------------------------------
+
+    private fun gymHabit(): Pair<Long, Long> = runBlocking {
+        val zone = repo.saveZone(Zone(name = "Gym", latitude = 12.97, longitude = 77.59, radiusM = 100))
+        val habit = repo.saveHabit(
+            Habit(name = "Gym", type = HabitType.ZONE, zoneId = zone, windowStart = LocalTime.of(18, 0),
+                windowEnd = LocalTime.of(19, 30), basePoints = 10, creatureLine = CreatureLine.STRONG,
+                daysMask = EVERY_DAY_MASK, createdDate = monday)
+        )
+        zone to habit
+    }
+
+    @Test
+    fun `gym - dwell asks, yes starts at arrival, exit asks to confirm, 30 min is evidence`() = runBlocking {
+        val (zone, habit) = gymHabit()
+        assertEquals(150, repo.zone(zone)!!.radiusM) // never below 150 m
+        setTime(monday, 18, 10)
+        assertEquals(listOf(habit), repo.onZoneDwell(zone).map { it.id })
+        repo.startZoneSession(habit, dwellAt = ms(18, 10))
+        val going = habitToday(habit).inProgress!!
+        assertEquals(LocalTime.of(18, 5), repo.localTimeOf(going.startTime)) // arrived 5 min before the dwell
+        assertTrue(repo.onZoneDwell(zone).isEmpty()) // already going on: not asked again
+
+        setTime(monday, 19, 0)
+        val toConfirm = repo.onZoneExit(zone, ms(19, 0))
+        assertEquals(1, toConfirm.size)
+        val h = habitToday(habit)
+        assertFalse(h.isDone) // still needs the user's confirmation
+        assertTrue(h.suggested!!.evidenceFound) // 55 min in the zone
+
+        repo.confirmSuggestion(toConfirm.single())
+        assertEquals(12, habitToday(habit).points) // in the window, ×1.2 evidence
+        assertTrue(repo.onZoneDwell(zone).isEmpty()) // done today: no more questions
+    }
+
+    @Test
+    fun `a short gym visit has no evidence, and leaving without a session does nothing`() = runBlocking {
+        val (zone, habit) = gymHabit()
+        setTime(monday, 18, 10)
+        assertTrue(repo.onZoneExit(zone, ms(18, 10)).isEmpty()) // drove past / said No
+        repo.startZoneSession(habit, ms(18, 10))
+        setTime(monday, 18, 25)
+        val id = repo.onZoneExit(zone, ms(18, 25)).single()
+        assertFalse(repo.session(id)!!.evidenceFound) // 20 min
+    }
+
+    @Test
+    fun `deleting a zone makes its habits manual and keeps them`() = runBlocking {
+        val (zone, habit) = gymHabit()
+        repo.deleteZone(zone)
+        val h = db.habits().get(habit)!!
+        assertEquals(HabitType.MANUAL, h.type)
+        assertNull(h.zoneId)
+        assertTrue(repo.watchedZones().isEmpty())
+    }
 }
