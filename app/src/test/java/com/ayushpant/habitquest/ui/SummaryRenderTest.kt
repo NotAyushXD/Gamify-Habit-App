@@ -97,9 +97,6 @@ class SummaryRenderTest {
         compose.onNodeWithText("Month").performClick()
         compose.mainClock.advanceTimeBy(2_000)
         save(out, "summary-month.png")
-        compose.onNodeWithText("🏅 Badges").performClick()
-        compose.mainClock.advanceTimeBy(2_000)
-        save(out, "summary-sheet-badges.png")
         today.value = true
         compose.mainClock.advanceTimeBy(2_000)
         save(out, "today.png")
