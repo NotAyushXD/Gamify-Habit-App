@@ -293,12 +293,17 @@ private fun AppHabitGuide(
 
 /** Opens Habit Quest's own switch in "Notification access" (Android 11+), or the list of apps before that. */
 private fun openNotificationAccess(context: android.content.Context) {
-    val component = android.content.ComponentName(context, HabitListenerService::class.java)
-    val direct = Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
-        .putExtra(AndroidSettings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component.flattenToString())
     val list = Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && direct.resolveActivity(context.packageManager) != null) direct else list
-    context.startActivity(intent)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val component = android.content.ComponentName(context, HabitListenerService::class.java)
+        val direct = Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+            .putExtra(AndroidSettings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component.flattenToString())
+        if (direct.resolveActivity(context.packageManager) != null) {
+            context.startActivity(direct)
+            return
+        }
+    }
+    context.startActivity(list)
 }
 
 /** App info, where "⋮ → Allow restricted settings" is (for apps installed from a file). */
