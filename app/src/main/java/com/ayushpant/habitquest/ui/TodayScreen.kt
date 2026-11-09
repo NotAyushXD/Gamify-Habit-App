@@ -3,6 +3,29 @@ package com.ayushpant.habitquest.ui
 import android.app.TimePickerDialog
 import android.text.format.DateFormat
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
@@ -13,13 +36,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -27,20 +48,13 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,7 +78,6 @@ import com.ayushpant.habitquest.data.PromiseStatus
 import com.ayushpant.habitquest.data.Session
 import com.ayushpant.habitquest.data.TaskToday
 import com.ayushpant.habitquest.data.TodayData
-import com.ayushpant.habitquest.scoring.ScoringConfig
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,6 +138,18 @@ private val HHMM = DateTimeFormatter.ofPattern("HH:mm")
 private val DAY_TITLE = DateTimeFormatter.ofPattern("EEEE d MMMM")
 private val DUE_DAY = DateTimeFormatter.ofPattern("EEE d MMM")
 
+private fun timeOfMillis(ms: Long): LocalTime = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).toLocalTime()
+
+/** What a habit or task panel (bottom sheet) is open for. */
+private sealed interface Sheet {
+    data class ForHabit(val habitId: Long) : Sheet
+    data class ForTask(val taskId: Long) : Sheet
+}
+
+/**
+ * Today: one glance at the day (ring, points, level, one line of encouragement), then the habits and
+ * the tasks. Each row has one big round button (done) and opens a panel with every other action.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(
@@ -134,11 +159,13 @@ fun TodayScreen(
     onEditTask: (Long) -> Unit,
 ) {
     val data by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     // rememberSaveable: the chosen tab survives rotation and coming back from the editor.
     var tab by rememberSaveable { mutableIntStateOf(ItemKind.HABIT.ordinal) }
     val kind = ItemKind.entries[tab]
     var editing by remember { mutableStateOf<Session?>(null) }
     var reopening by remember { mutableStateOf<TaskToday?>(null) }
+    var sheet by remember { mutableStateOf<Sheet?>(null) }
 
     // Celebrate what was just finished: compare with the data before the change.
     var previous by remember { mutableStateOf<TodayData?>(null) }
@@ -155,60 +182,113 @@ fun TodayScreen(
     }
 
     Box(Modifier.fillMaxSize()) {
-    Scaffold(
-        topBar = {
-            TopAppBar(title = {
-                Column {
-                    Text("Today")
-                    data?.let { Text(it.day.format(DAY_TITLE), style = MaterialTheme.typography.bodySmall) }
+        Scaffold(
+            floatingActionButton = {
+                ExtendedFloatingActionButton(
+                    onClick = { onAdd(kind) },
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text(if (kind == ItemKind.HABIT) "Habit" else "Task") },
+                )
+            },
+        ) { padding ->
+            val today = data ?: return@Scaffold
+            // One list for the whole page: the header scrolls away, the switch sticks to the top.
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(bottom = 96.dp), // room for the + button
+            ) {
+                item(key = "header") { Header(today) }
+                stickyHeader(key = "switch") {
+                    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        val scheduled = today.habits.count { it.scheduledToday }
+                        val done = today.habits.count { it.scheduledToday && it.isDone }
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            SegmentedButton(selected = kind == ItemKind.HABIT, onClick = { tab = ItemKind.HABIT.ordinal }, shape = SegmentedButtonDefaults.itemShape(0, 2)) {
+                                Text("Habits  $done/$scheduled")
+                            }
+                            SegmentedButton(selected = kind == ItemKind.TASK, onClick = { tab = ItemKind.TASK.ordinal }, shape = SegmentedButtonDefaults.itemShape(1, 2)) {
+                                Text("Tasks  ${today.tasks.count { !it.isDone }}")
+                            }
+                        }
+                    }
                 }
-            })
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { onAdd(kind) }) {
-                Icon(Icons.Default.Add, contentDescription = if (kind == ItemKind.HABIT) "Add habit" else "Add task")
-            }
-        },
-    ) { padding ->
-        val today = data ?: return@Scaffold
-        // One list for the whole page: the cards scroll away, the tabs stick to the top.
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = 88.dp), // room for the + button
-        ) {
-            item(key = "cards") {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NudgeCard(today)
-                    SummaryCard(today)
+                when (kind) {
+                    ItemKind.HABIT -> {
+                        if (today.habits.isEmpty()) item(key = "empty-h") {
+                            EmptyState("🌱", "Start with one small habit", "Something you want to do every day, like meditating or reading.", "Add your first habit") { onAdd(ItemKind.HABIT) }
+                        }
+                        items(today.habits, key = { "habit-${it.habit.id}" }) { h ->
+                            HabitRow(
+                                h = h,
+                                onCheck = {
+                                    val done = h.done.firstOrNull()
+                                    if (done != null) editing = done else vm.tick(h.habit.id)
+                                },
+                                onOpen = { sheet = Sheet.ForHabit(h.habit.id) },
+                                onConfirmDetected = { vm.confirmDetected(it.id) },
+                                onRejectDetected = { vm.rejectDetected(it.id) },
+                                onFinish = { vm.finish(it.id) },
+                                onCancel = { vm.remove(it.id) },
+                            )
+                        }
+                    }
+                    ItemKind.TASK -> {
+                        if (today.tasks.isEmpty()) item(key = "empty-t") {
+                            EmptyState("📋", "No tasks right now", "A task is a one-off thing with a due date, like renewing a passport.", "Add a task") { onAdd(ItemKind.TASK) }
+                        }
+                        items(today.tasks, key = { "task-${it.task.id}" }) { t ->
+                            TaskRow(
+                                t = t,
+                                onCheck = { if (t.isDone) reopening = t else vm.completeTask(t.task.id) },
+                                onOpen = { sheet = Sheet.ForTask(t.task.id) },
+                            )
+                        }
+                    }
                 }
             }
-            stickyHeader(key = "tabs") {
-                PrimaryTabRow(selectedTabIndex = tab) {
-                    val scheduled = today.habits.count { it.scheduledToday }
-                    val doneScheduled = today.habits.count { it.scheduledToday && it.isDone }
-                    Tab(
-                        selected = kind == ItemKind.HABIT,
-                        onClick = { tab = ItemKind.HABIT.ordinal },
-                        text = { Text("Habits  $doneScheduled/$scheduled") },
-                    )
-                    Tab(
-                        selected = kind == ItemKind.TASK,
-                        onClick = { tab = ItemKind.TASK.ordinal },
-                        text = { Text("Tasks  ${today.tasks.count { !it.isDone }} open") },
-                    )
-                }
-            }
-            when (kind) {
-                ItemKind.HABIT -> habitItems(today, vm, onOpenDone = { editing = it }, onEditHabit = onEditHabit)
-                ItemKind.TASK -> taskItems(
-                    today,
-                    onTick = { t -> if (t.isDone) reopening = t else vm.completeTask(t.task.id) },
-                    onEditTask = onEditTask,
+        }
+        celebration?.let { c -> CelebrationOverlay(c, onDone = { if (celebration?.id == c.id) celebration = null }) }
+    }
+
+    // ---- Panels and dialogs ----------------------------------------------------------------------
+    val today = data
+    when (val sh = sheet) {
+        is Sheet.ForHabit -> today?.habits?.firstOrNull { it.habit.id == sh.habitId }?.let { h ->
+            ModalBottomSheet(onDismissRequest = { sheet = null }) {
+                HabitActions(
+                    h = h,
+                    timeOf = vm::timeOf,
+                    onAction = { action ->
+                        sheet = null
+                        when (action) {
+                            HabitAction.DONE_NOW -> vm.tick(h.habit.id)
+                            HabitAction.START -> vm.start(h.habit.id)
+                            HabitAction.OPEN_APP -> vm.openApp(context, h.habit)
+                            HabitAction.CHANGE -> h.done.firstOrNull()?.let { editing = it }
+                            HabitAction.CANT_TODAY -> context.startActivity(
+                                com.ayushpant.habitquest.reminders.PopupActivity.promiseIntent(context, -1L, h.habit.id)
+                            )
+                            HabitAction.EDIT -> onEditHabit(h.habit.id)
+                        }
+                    },
                 )
             }
         }
-    }
-    celebration?.let { c -> CelebrationOverlay(c, onDone = { if (celebration?.id == c.id) celebration = null }) }
+        is Sheet.ForTask -> today?.tasks?.firstOrNull { it.task.id == sh.taskId }?.let { t ->
+            ModalBottomSheet(onDismissRequest = { sheet = null }) {
+                Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(t.task.name, style = MaterialTheme.typography.titleLarge)
+                    Text(taskStatus(t), style = MaterialTheme.typography.bodyMedium)
+                    if (t.isDone) {
+                        SheetButton("↩︎  Not done after all") { sheet = null; reopening = t }
+                    } else {
+                        SheetButton("✓  Mark done  (+${t.points})", primary = true) { sheet = null; vm.completeTask(t.task.id) }
+                    }
+                    SheetButton("✏️  Edit task") { sheet = null; onEditTask(t.task.id) }
+                }
+            }
+        }
+        null -> Unit
     }
 
     reopening?.let { t ->
@@ -232,210 +312,266 @@ fun TodayScreen(
     }
 }
 
+private fun greeting(hour: Int) = when (hour) {
+    in 5..11 -> "Good morning"
+    in 12..16 -> "Good afternoon"
+    in 17..21 -> "Good evening"
+    else -> "Hello"
+}
+
+/** The top of Today: greeting, the day's ring with points, level, and one line of encouragement. */
 @Composable
-private fun EmptyText(text: String) {
-    Text(text, modifier = Modifier.padding(16.dp).padding(top = 16.dp), style = MaterialTheme.typography.bodyLarge)
-}
-
-/** The habit tiles, as items of the page's list. */
-private fun LazyListScope.habitItems(
-    today: TodayData,
-    vm: TodayViewModel,
-    onOpenDone: (Session) -> Unit,
-    onEditHabit: (Long) -> Unit,
-) {
-    if (today.habits.isEmpty()) {
-        item(key = "no-habits") { EmptyText("No habits yet. Tap + to add your first habit.") }
-        return
-    }
-    items(today.habits, key = { "habit-${it.habit.id}" }) { h ->
-        val context = LocalContext.current
-        HabitTile(
-            h = h,
-            timeOf = vm::timeOf,
-            onStart = { if (h.habit.type == HabitType.APP) vm.openApp(context, h.habit) else vm.start(h.habit.id) },
-            onConfirmDetected = { vm.confirmDetected(it.id) },
-            onRejectDetected = { vm.rejectDetected(it.id) },
-            onFinish = { s -> vm.finish(s.id) },
-            onCancel = { s -> vm.remove(s.id) },
-            onTick = { vm.tick(h.habit.id) },
-            onOpenDone = onOpenDone,
-            onEdit = { onEditHabit(h.habit.id) },
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-        )
-    }
-}
-
-/** The task tiles, as items of the page's list. */
-private fun LazyListScope.taskItems(today: TodayData, onTick: (TaskToday) -> Unit, onEditTask: (Long) -> Unit) {
-    if (today.tasks.isEmpty()) {
-        item(key = "no-tasks") { EmptyText("No open tasks. Tap + to add one.") }
-        return
-    }
-    items(today.tasks, key = { "task-${it.task.id}" }) { t ->
-        TaskTile(t = t, onTick = { onTick(t) }, onEdit = { onEditTask(t.task.id) }, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-    }
-}
-
-@Composable
-private fun NudgeCard(today: TodayData) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-    ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-            today.nudge?.let { Text(it, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium) }
-            Text(
-                "“${quoteOfTheDay(today.day.dayOfYear)}”",
-                style = MaterialTheme.typography.bodySmall,
-                fontStyle = FontStyle.Italic,
-                modifier = Modifier.padding(top = if (today.nudge != null) 4.dp else 0.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SummaryCard(today: TodayData) {
+private fun Header(today: TodayData) {
     val level = today.level
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${today.totalPoints} points today", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                Text("Lv ${level.number} · ${level.title}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+    val scheduled = today.habits.count { it.scheduledToday }
+    val done = today.habits.count { it.scheduledToday && it.isDone }
+    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(greeting(LocalTime.now().hour), style = MaterialTheme.typography.headlineSmall)
+                Text(today.day.format(DAY_TITLE), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            LinearProgressIndicator(progress = { level.progress }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-            Text(
-                "${level.toNext} points to Lv ${level.number + 1} · ${today.lifetimePoints} in total",
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
-            )
-            val bonusText = if (today.dailyBonus > 0) {
-                "All habits done: +${today.dailyBonus} daily bonus included"
-            } else {
-                "Do every habit scheduled today for +${ScoringConfig.DEFAULT.dailyBonus}"
+            Pill("Lv ${level.number} · ${level.title}", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DayRing(done, scheduled)
+                    Column(Modifier.padding(start = 16.dp).weight(1f)) {
+                        Text("${today.totalPoints} points", style = MaterialTheme.typography.headlineSmall)
+                        Text(
+                            when {
+                                scheduled == 0 -> "Nothing planned today"
+                                done == scheduled -> "🌟 Perfect day! +${today.dailyBonus} bonus"
+                                else -> "${scheduled - done} to go for a perfect day"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        LinearProgressIndicator(
+                            progress = { level.progress },
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                        Text("${level.toNext} to Lv ${level.number + 1}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+                if (today.balance.any { it.planned > 0 }) BalanceRow(today.balance, Modifier.padding(top = 14.dp))
             }
-            Text(bonusText, style = MaterialTheme.typography.bodyMedium)
-            if (today.balance.any { it.planned > 0 }) BalanceRow(today.balance, Modifier.padding(top = 12.dp))
+        }
+        val line = today.nudge
+        Column {
+            if (line != null && !line.startsWith("🌟")) Text(line, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text("“${quoteOfTheDay(today.day.dayOfYear)}”", style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** The day's progress: a ring with "2/3" in the middle. */
+@Composable
+private fun DayRing(done: Int, total: Int) {
+    val target = if (total == 0) 0f else done.toFloat() / total
+    val progress by androidx.compose.animation.core.animateFloatAsState(target, label = "day")
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    val color = MaterialTheme.colorScheme.primary
+    Box(Modifier.size(84.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round)
+            val inset = 5.dp.toPx()
+            val arc = Size(size.width - 2 * inset, size.height - 2 * inset)
+            drawArc(track, 0f, 360f, false, Offset(inset, inset), arc, style = Stroke(10.dp.toPx()))
+            if (progress > 0f) drawArc(color, -90f, 360f * progress, false, Offset(inset, inset), arc, style = stroke)
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("$done/$total", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("done", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun HabitTile(
+private fun Pill(text: String, background: Color, content: Color) {
+    Box(Modifier.clip(RoundedCornerShape(50)).background(background).padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Text(text, style = MaterialTheme.typography.labelLarge, color = content)
+    }
+}
+
+/** A small label like "🕖 07:00–08:00" or "🔥 9". */
+@Composable
+private fun Chip(text: String, color: Color = MaterialTheme.colorScheme.surfaceContainer, content: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(color).padding(horizontal = 8.dp, vertical = 3.dp)) {
+        Text(text, style = MaterialTheme.typography.labelMedium, color = content, maxLines = 1)
+    }
+}
+
+/** The big round "done" button: empty ring when open, filled with ✓ when done. */
+@Composable
+private fun CheckCircle(done: Boolean, onClick: () -> Unit, contentDescription: String) {
+    val color = MaterialTheme.colorScheme.primary
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(if (done) color else Color.Transparent)
+            .border(2.5.dp, if (done) color else MaterialTheme.colorScheme.outline, CircleShape)
+            .clickable(onClick = onClick)
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (done) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+    }
+}
+
+@Composable
+private fun EmptyState(emoji: String, title: String, text: String, button: String, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(emoji, fontSize = 48.sp)
+        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+        Button(onClick = onClick, modifier = Modifier.padding(top = 16.dp)) { Text(button) }
+    }
+}
+
+/** One habit: the done button, the name with chips, and one short status line. Tap for actions. */
+@Composable
+private fun HabitRow(
     h: HabitToday,
-    timeOf: (Session) -> LocalTime,
-    onStart: () -> Unit,
+    onCheck: () -> Unit,
+    onOpen: () -> Unit,
+    onConfirmDetected: (Session) -> Unit,
+    onRejectDetected: (Session) -> Unit,
     onFinish: (Session) -> Unit,
     onCancel: (Session) -> Unit,
-    onTick: () -> Unit,
-    onOpenDone: (Session) -> Unit,
-    onEdit: () -> Unit,
-    modifier: Modifier = Modifier,
-    onConfirmDetected: (Session) -> Unit = {},
-    onRejectDetected: (Session) -> Unit = {},
 ) {
     val firstDone = h.done.firstOrNull()
-    val isApp = h.habit.type == HabitType.APP
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .alpha(if (h.scheduledToday || h.isDone) 1f else 0.6f)
-            // Spec 9: tap the tile to start a session.
-            .clickable {
-                when {
-                    firstDone != null -> onOpenDone(firstDone)
-                    h.inProgress == null -> onStart()
-                }
-            },
-        colors = if (h.isDone) {
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-        } else {
-            CardDefaults.cardColors()
-        },
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp).alpha(if (h.scheduledToday || h.isDone) 1f else 0.55f).clickable(onClick = onOpen),
     ) {
-        Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(h.habit.name, style = MaterialTheme.typography.titleMedium)
-                val window = "${h.habit.windowStart.format(HHMM)}–${h.habit.windowEnd.format(HHMM)}"
-                val freeze = if (h.freezeUsed && h.streakDays > 0) " · ❄️ freeze used" else ""
-                val streak = if (h.streakDays > 0) "  ·  🔥 ${h.streakDays}$freeze" else ""
-                Text(window + streak, style = MaterialTheme.typography.bodyMedium)
-                val status = when {
-                    firstDone != null -> {
-                        val kept = if (h.promise?.status == PromiseStatus.KEPT) "  ·  🤝 promise kept" else ""
-                        val bonus = if (firstDone.bonusPoints > 0) " (incl. +${firstDone.bonusPoints} bonus)" else ""
-                        "Done at ${timeOf(firstDone).format(HHMM)}  ·  +${h.points}$bonus$kept"
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            CheckCircle(h.isDone, onCheck, if (h.isDone) "${h.habit.name} done. Change or undo" else "Mark ${h.habit.name} done")
+            Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(h.habit.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+                    when (h.habit.type) {
+                        HabitType.APP -> Text("  🎧", style = MaterialTheme.typography.bodyMedium)
+                        HabitType.ZONE -> Text("  📍", style = MaterialTheme.typography.bodyMedium)
+                        HabitType.MANUAL -> Unit
                     }
-                    h.suggested != null -> {
-                        val s = h.suggested
-                        "🎧 Detected ${timeOf(s).format(HHMM)}–${java.time.Instant.ofEpochMilli(s.endTime!!).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(HHMM)}" +
-                            " (${(s.endTime - s.startTime) / 60_000} min). Was it you?"
-                    }
-                    h.inProgress != null && h.habit.type == HabitType.ZONE -> "📍 There since ${timeOf(h.inProgress).format(HHMM)} · ends when you leave"
-                    h.inProgress != null -> "In progress since ${timeOf(h.inProgress).format(HHMM)}"
-                    h.promise != null -> "🤝 You promised: today at ${java.time.Instant.ofEpochMilli(h.promise.dueAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(HHMM)}"
-                    h.skip?.promised == true -> "Skipped today · promise made"
-                    h.skip != null -> "Skipped today"
-                    !h.scheduledToday -> "Not scheduled today"
-                    isApp -> "Not done — tap to open the app"
-                    h.habit.type == HabitType.ZONE -> "Not done — you'll be asked when you get there"
-                    else -> "Not done — tap to start"
                 }
-                Text(status, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Chip("🕖 ${h.habit.windowStart.format(HHMM)}–${h.habit.windowEnd.format(HHMM)}")
+                    if (h.streakDays > 0) Chip("🔥 ${h.streakDays}" + if (h.freezeUsed) " ❄️" else "", Brand.Amber.copy(alpha = 0.18f), MaterialTheme.colorScheme.onSurface)
+                }
+                val (status, color) = habitStatus(h)
+                if (status != null) Text(status, style = MaterialTheme.typography.bodySmall, color = color ?: MaterialTheme.colorScheme.onSurfaceVariant)
                 if (h.suggested != null && firstDone == null) {
-                    Row(Modifier.padding(top = 8.dp)) {
-                        Button(onClick = { onConfirmDetected(h.suggested) }) { Text("Confirm ✓") }
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedButton(onClick = { onRejectDetected(h.suggested) }) { Text("Not done") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { onConfirmDetected(h.suggested) }) { Text("Confirm") }
+                        OutlinedButton(onClick = { onRejectDetected(h.suggested) }) { Text("Not me") }
                     }
                 }
                 if (h.inProgress != null && firstDone == null) {
-                    Row(Modifier.padding(top = 8.dp)) {
-                        Button(onClick = { onFinish(h.inProgress) }) { Text("Done") }
-                        Spacer(Modifier.width(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { onFinish(h.inProgress) }) { Text("Finish") }
                         OutlinedButton(onClick = { onCancel(h.inProgress) }) { Text("Cancel") }
                     }
                 }
             }
-            // Spec 9: tick a manual habit.
-            Checkbox(
-                checked = h.isDone,
-                onCheckedChange = { if (firstDone != null) onOpenDone(firstDone) else onTick() },
-            )
-            IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, contentDescription = "Edit habit") }
+            if (firstDone != null) Text("+${h.points}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
         }
     }
 }
 
+/** One short line under the habit name, or null when the chips say enough. Colour: null = default. */
 @Composable
-private fun TaskTile(t: TaskToday, onTick: () -> Unit, onEdit: () -> Unit, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier.fillMaxWidth().clickable(enabled = t.isDone, onClick = onTick),
-        colors = if (t.isDone) {
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-        } else {
-            CardDefaults.cardColors()
-        },
-    ) {
-        Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(t.task.name, style = MaterialTheme.typography.titleMedium)
-                val due = when {
-                    t.isDone && t.daysLate > 0 -> "Done ${dayCount(t.daysLate)} late  ·  +${t.points}"
-                    t.isDone -> "Done on time  ·  +${t.points}"
-                    t.daysLate > 0 -> "Overdue by ${dayCount(t.daysLate)}  ·  now worth ${t.points}"
-                    t.daysLate == 0L -> "Due today  ·  worth ${t.points}"
-                    else -> "Due ${t.task.dueDate.format(DUE_DAY)}  ·  worth ${t.points}"
-                }
-                Text(
-                    due,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (!t.isDone && t.daysLate > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                )
+private fun habitStatus(h: HabitToday): Pair<String?, Color?> {
+    val firstDone = h.done.firstOrNull()
+    return when {
+        firstDone != null -> {
+            val kept = if (h.promise?.status == PromiseStatus.KEPT) " · 🤝 promise kept" else ""
+            "✓ Done at ${timeOfMillis(firstDone.startTime).format(HHMM)}$kept" to MaterialTheme.colorScheme.primary
+        }
+        h.suggested != null -> {
+            val s = h.suggested
+            "🎧 ${(s.endTime!! - s.startTime) / 60_000} min detected (${timeOfMillis(s.startTime).format(HHMM)}). Was it you?" to null
+        }
+        h.inProgress != null && h.habit.type == HabitType.ZONE -> "📍 There since ${timeOfMillis(h.inProgress.startTime).format(HHMM)}" to MaterialTheme.colorScheme.primary
+        h.inProgress != null -> "● Going since ${timeOfMillis(h.inProgress.startTime).format(HHMM)}" to MaterialTheme.colorScheme.primary
+        h.promise != null -> "🤝 You promised: ${timeOfMillis(h.promise.dueAt).format(HHMM)} today" to MaterialTheme.colorScheme.tertiary
+        h.skip != null -> (if (h.skip.promised) "Skipped today · promise made" else "Skipped today") to null
+        !h.scheduledToday -> "Rest day" to null
+        else -> null to null
+    }
+}
+
+private enum class HabitAction { DONE_NOW, START, OPEN_APP, CHANGE, CANT_TODAY, EDIT }
+
+/** The panel that opens when a habit is tapped: every action in plain words. */
+@Composable
+private fun HabitActions(h: HabitToday, timeOf: (Session) -> LocalTime, onAction: (HabitAction) -> Unit) {
+    val done = h.done.firstOrNull()
+    Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(h.habit.name, style = MaterialTheme.typography.titleLarge)
+        Text(
+            buildString {
+                append("Planned ${h.habit.windowStart.format(HHMM)}–${h.habit.windowEnd.format(HHMM)}")
+                if (h.streakDays > 0) append(" · 🔥 ${h.streakDays}-day streak")
+                if (done != null) append(" · done at ${timeOf(done).format(HHMM)}, +${h.points}")
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (done == null) {
+            SheetButton("✓  I did it", primary = true) { onAction(HabitAction.DONE_NOW) }
+            when (h.habit.type) {
+                HabitType.APP -> SheetButton("🎧  Open the app") { onAction(HabitAction.OPEN_APP) }
+                else -> if (h.inProgress == null) SheetButton("▶  Start now, finish later") { onAction(HabitAction.START) }
             }
-            Checkbox(checked = t.isDone, onCheckedChange = { onTick() })
-            IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, contentDescription = "Edit task") }
+            if (h.skip == null) SheetButton("🤝  Can't today") { onAction(HabitAction.CANT_TODAY) }
+        } else {
+            SheetButton("🕖  Change time or undo") { onAction(HabitAction.CHANGE) }
+        }
+        SheetButton("✏️  Edit habit") { onAction(HabitAction.EDIT) }
+    }
+}
+
+@Composable
+private fun SheetButton(text: String, primary: Boolean = false, onClick: () -> Unit) {
+    if (primary) {
+        Button(onClick = onClick, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(text, style = MaterialTheme.typography.titleMedium) }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(text, style = MaterialTheme.typography.bodyLarge) }
+    }
+}
+
+private fun taskStatus(t: TaskToday): String = when {
+    t.isDone && t.daysLate > 0 -> "Done ${dayCount(t.daysLate)} late · +${t.points}"
+    t.isDone -> "Done on time · +${t.points}"
+    t.daysLate > 0 -> "Overdue by ${dayCount(t.daysLate)} · now worth ${t.points}"
+    t.daysLate == 0L -> "Due today · worth ${t.points}"
+    else -> "Due ${t.task.dueDate.format(DUE_DAY)} · worth ${t.points}"
+}
+
+/** One task: the done button, the name, and its due date as a coloured chip. */
+@Composable
+private fun TaskRow(t: TaskToday, onCheck: () -> Unit, onOpen: () -> Unit) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp).clickable(onClick = onOpen)) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            CheckCircle(t.isDone, onCheck, if (t.isDone) "${t.task.name} done. Undo" else "Mark ${t.task.name} done")
+            Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(t.task.name, style = MaterialTheme.typography.titleMedium)
+                when {
+                    t.isDone -> Chip(if (t.daysLate > 0) "Done late" else "✓ On time", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+                    t.daysLate > 0 -> Chip("Overdue ${dayCount(t.daysLate)}", Brand.Coral.copy(alpha = 0.16f), Brand.Coral)
+                    t.daysLate == 0L -> Chip("Due today", Brand.Amber.copy(alpha = 0.2f), MaterialTheme.colorScheme.onSurface)
+                    else -> Chip("Due ${t.task.dueDate.format(DUE_DAY)}")
+                }
+            }
+            Text(
+                "+${t.points}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (t.isDone) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
