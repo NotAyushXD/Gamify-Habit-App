@@ -86,6 +86,7 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
         }
         current.value = next
         if (view == null) addView()
+        Buzz.reminder(this)
     }
 
     private fun addView() {

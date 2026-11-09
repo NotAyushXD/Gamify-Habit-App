@@ -154,6 +154,30 @@ class ReminderRepository(
         db.habits().observeActive().map { list -> list.filter { it.type == com.ayushpant.habitquest.data.HabitType.APP && it.sourcePackage != null } }
 
     /** Where the user last dragged the popup (pixels from the top), or null for the default place. */
+    /**
+     * Reminders that came during a call or navigation: they were sent as a quiet notification and
+     * pop up when the call ends. Kept in app_state so a restarted app still knows them.
+     */
+    suspend fun addAfterCall(ids: List<Long>) {
+        val all = (afterCallIds() + ids).distinct()
+        db.appState().put(AppState(KEY_AFTER_CALL, all.joinToString(",")))
+    }
+
+    private suspend fun afterCallIds(): List<Long> =
+        db.appState().get(KEY_AFTER_CALL).orEmpty().split(',').mapNotNull { it.toLongOrNull() }
+
+    /** True if reminders wait for a call to end. */
+    suspend fun hasAfterCall(): Boolean = afterCallIds().isNotEmpty()
+
+    /** The waiting reminders that are still unanswered (not answered from the notification), and clears the list. */
+    suspend fun takeAfterCall(): List<Long> {
+        val ids = afterCallIds()
+        if (ids.isEmpty()) return emptyList()
+        db.appState().put(AppState(KEY_AFTER_CALL, ""))
+        val today = now().toLocalDate()
+        return ids.filter { id -> db.reminders().get(id)?.let { it.result == ReminderResult.SHOWN && it.day == today } == true }
+    }
+
     suspend fun popupY(): Int? = db.appState().get(KEY_POPUP_Y)?.toIntOrNull()
 
     suspend fun savePopupY(y: Int) = db.appState().put(AppState(KEY_POPUP_Y, y.toString()))
@@ -376,6 +400,7 @@ class ReminderRepository(
     private companion object {
         const val KEY_TASKS_POPUP = "tasks_popup."
         const val KEY_POPUP_Y = "popup_y"
+        const val KEY_AFTER_CALL = "after_call"
         const val KEY_CATCH_UP_SINCE = "catch_up_since"
     }
 }

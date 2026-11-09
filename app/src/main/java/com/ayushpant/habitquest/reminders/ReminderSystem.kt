@@ -93,13 +93,27 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) = runAsync {
         val app = context.applicationContext as HabitQuestApp
         // In quiet hours popups are dropped anyway, so there is nothing to wait for: no 60 s retries all night.
-        if (!app.reminders.inQuietHoursNow() && (ReminderScheduler.inCall(context) || HabitListenerService.isNavigating())) {
-            Log.i(LOG_TAG, "In a call or navigating: reminders wait")
-            ReminderScheduler.setAlarm(context, app.reminders.retryMillis())
+        val busy = !app.reminders.inQuietHoursNow() && (ReminderScheduler.inCall(context) || HabitListenerService.isNavigating())
+        if (busy) {
+            // Spec 6.2: no popup during a call. A quiet notification (short buzz, no sound) tells the user
+            // now; the popup comes when the call ends.
+            try {
+                val ids = app.reminders.takeDue()
+                if (ids.isNotEmpty()) {
+                    Log.i(LOG_TAG, "In a call or navigating: ${ids.size} reminder(s) as a quiet notification")
+                    app.reminders.addAfterCall(ids)
+                    PopupPresenter.notifyDuringCall(context, ids)
+                }
+            } finally {
+                if (app.reminders.hasAfterCall()) ReminderScheduler.setAlarm(context, app.reminders.retryMillis())
+                else ReminderScheduler.reschedule(context)
+            }
             return@runAsync
         }
         try {
-            val ids = app.reminders.takeDue()
+            val waiting = app.reminders.takeAfterCall()
+            for (id in waiting) NotificationManagerCompat.from(context).cancel(id.toInt())
+            val ids = waiting + app.reminders.takeDue()
             if (ids.isNotEmpty()) PopupPresenter.show(context, ids)
         } finally {
             // Always set the next alarm, even if showing failed: otherwise all later reminders are lost.
@@ -127,12 +141,21 @@ class BootReceiver : BroadcastReceiver() {
 object PopupPresenter {
     const val CHANNEL_REMINDERS = "reminders"
     const val CHANNEL_SERVICE = "popup_service"
+    const val CHANNEL_DURING_CALL = "reminders_call"
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_REMINDERS, "Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Habit reminders when popups over other apps are not allowed"
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_DURING_CALL, "Reminders during a call", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "A quiet reminder while you are in a call or navigating; the popup comes after"
+                setSound(null, null)
+                enableVibration(true)
+                vibrationPattern = Buzz.SOFT
             }
         )
         nm.createNotificationChannel(
@@ -233,7 +256,16 @@ object PopupPresenter {
         }
     }
 
-    private fun notify(context: Context, logId: Long, model: PopupModel) {
+    /** During a call: the same reminders as quiet notifications; tapping one answers it now. */
+    suspend fun notifyDuringCall(context: Context, logIds: List<Long>) {
+        val app = context.applicationContext as HabitQuestApp
+        for (id in logIds) {
+            val model = app.reminders.popupFor(id) ?: continue
+            notify(context, id, model, CHANNEL_DURING_CALL, after = "It pops up again after your call.")
+        }
+    }
+
+    private fun notify(context: Context, logId: Long, model: PopupModel, channel: String = CHANNEL_REMINDERS, after: String? = null) {
         if (!ReminderScheduler.canNotify(context)) {
             Log.w(LOG_TAG, "Popup $logId not shown: no overlay and no notification permission")
             return
@@ -250,10 +282,11 @@ object PopupPresenter {
             Intent(context, PopupActivity::class.java).putExtra(PopupActivity.EXTRA_LOG_ID, logId),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL_REMINDERS)
+        val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
-            .setContentText(text)
+            .setContentText(if (after != null) "$text $after" else text)
+            .setSilent(channel == CHANNEL_DURING_CALL)
             .setContentIntent(open)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

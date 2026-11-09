@@ -162,4 +162,24 @@ class ReminderRepositoryTest {
         setTime(monday, 12, 0)
         assertEquals(monday.plusDays(1).atTime(0, 1), localOf(reminders.nextAlarmMillis()))
     }
+
+    @Test
+    fun `reminders from a call pop up after it, unless answered from the notification`() = runBlocking {
+        val a = newHabit("Meditate")
+        newHabit("Read")
+        setTime(monday, 6, 31)
+        val ids = reminders.takeDue()
+        assertEquals(2, ids.size)
+        reminders.addAfterCall(ids)
+        assertTrue(reminders.hasAfterCall())
+        // The user answers one from the notification during the call.
+        reminders.done(ids.first { (reminders.popupFor(it) as PopupModel.Reminder).habitId == a }, a)
+
+        setTime(monday, 6, 40)
+        val after = reminders.takeAfterCall()
+        assertEquals(1, after.size)
+        assertEquals("Read", (reminders.popupFor(after.single()) as PopupModel.Reminder).habitName)
+        assertTrue(!reminders.hasAfterCall())
+        assertTrue(reminders.takeAfterCall().isEmpty())
+    }
 }
