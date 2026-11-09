@@ -47,6 +47,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import com.ayushpant.habitquest.reminders.quietClash
+import com.ayushpant.habitquest.reminders.ReminderRules
+import com.ayushpant.habitquest.reminders.QuietClash
+import com.ayushpant.habitquest.HabitQuestApp
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -108,6 +113,10 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     var addingZone by remember { mutableStateOf(false) }
     val zones by repo.observeZones().collectAsStateWithLifecycle(initialValue = emptyList())
     var pickingApp by remember { mutableStateOf(false) }
+    // Quiet hours, to warn when a reminder time falls inside them (null in previews and tests).
+    val reminderRules by produceState<ReminderRules?>(null) {
+        value = (context.applicationContext as? HabitQuestApp)?.reminders?.rules()
+    }
 
     // Mind / Body / Soul: suggested from the name until the user taps a chip.
     var dims by remember { mutableStateOf(emptySet<Dimension>()) }
@@ -288,6 +297,15 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                         OutlinedButton(onClick = { pickTime(windowEnd) { windowEnd = it } }) { Text(windowEnd.format(HHMM)) }
                     }
                     if (!windowValid) Text("The end must be after the start.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    reminderRules?.takeIf { windowValid }?.let { rules ->
+                        val quiet = "${rules.quietStart.format(HHMM)}–${rules.quietEnd.format(HHMM)}"
+                        val lastChance = windowEnd.minusMinutes(rules.config.lastChanceMinutes).format(HHMM)
+                        when (quietClash(windowStart, windowEnd, rules)) {
+                            QuietClash.NONE -> Unit
+                            QuietClash.START_ONLY -> QuietNote("🌙 ${windowStart.format(HHMM)} is in your quiet hours ($quiet), so the first reminder won't pop up. You'll get the last-chance one at $lastChance.")
+                            QuietClash.ALL -> QuietNote("🌙 This time is in your quiet hours ($quiet), so no reminder will pop up. Pick another time, or change quiet hours in Settings.")
+                        }
+                    }
                     ChipFlow {
                         for ((label, mask) in DAY_PRESETS) {
                             FilterChip(selected = daysMask == mask, onClick = { daysMask = mask }, label = { Text(label) })
@@ -473,4 +491,13 @@ private fun duePresets(today: LocalDate): List<Pair<String, LocalDate>> {
     val saturday = today.with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.SATURDAY))
     val nextMonday = today.with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY))
     return listOf("Today" to today, "Tomorrow" to today.plusDays(1), "This weekend" to saturday, "Next week" to nextMonday)
+}
+
+/** A soft warning line in the editor (not an error: the habit can still be saved). */
+@Composable
+private fun QuietNote(text: String) {
+    Text(
+        text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).background(MaterialTheme.colorScheme.secondaryContainer).padding(10.dp),
+    )
 }

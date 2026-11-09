@@ -131,6 +131,9 @@ class ReminderRepository(
         onChange()
     }
 
+    /** The reminder rules from the user's settings (quiet hours, limits). */
+    suspend fun rules(): ReminderRules = settings().toRules()
+
     private fun Settings.toRules() = ReminderRules(quietEnabled, quietStart, quietEnd, checklistEnabled, maxReminders, config)
 
     /** One line of the reminder check in Settings. */

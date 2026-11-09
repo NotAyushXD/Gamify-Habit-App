@@ -146,3 +146,17 @@ fun decide(now: LocalDateTime, planned: List<Planned>, rules: ReminderRules): De
 /** The time of the next popup after [now], or null if nothing else is planned today. */
 fun nextAlarm(now: LocalDateTime, planned: List<Planned>): LocalDateTime? =
     planned.filter { it.at > now }.minOfOrNull { it.at }
+
+/** Which of a habit's reminders fall in quiet hours (and so will not pop up). */
+enum class QuietClash { NONE, START_ONLY, ALL }
+
+/**
+ * Warns in the editor when a habit's reminder times are in quiet hours: quiet hours suppress
+ * popups, they do not delay them, so such a habit would get fewer (or no) reminders.
+ */
+fun quietClash(windowStart: LocalTime, windowEnd: LocalTime, rules: ReminderRules): QuietClash {
+    if (!inQuietHours(windowStart, rules)) return QuietClash.NONE
+    val lastChance = windowEnd.minusMinutes(rules.config.lastChanceMinutes)
+    val hasLastChance = lastChance > windowStart && rules.maxPerHabit >= 2
+    return if (hasLastChance && !inQuietHours(lastChance, rules)) QuietClash.START_ONLY else QuietClash.ALL
+}

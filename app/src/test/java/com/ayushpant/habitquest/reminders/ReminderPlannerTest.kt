@@ -148,4 +148,14 @@ class ReminderPlannerTest {
         val d = decide(at(6, 31), planDay(day, listOf(h), emptyList(), rules.copy(checklistEnabled = false)), rules)
         assertEquals(listOf(ReminderKind.PROMISE), d.show.map { it.kind })
     }
+
+    @Test
+    fun `editor warns when reminder times fall in quiet hours`() {
+        // Quiet hours 23:30-06:00 in these rules.
+        assertEquals(QuietClash.NONE, quietClash(t(7, 0), t(9, 0), rules))
+        assertEquals(QuietClash.START_ONLY, quietClash(t(0, 40), t(9, 0), rules)) // last chance 08:45 still pops up
+        assertEquals(QuietClash.ALL, quietClash(t(0, 40), t(5, 0), rules))
+        assertEquals(QuietClash.ALL, quietClash(t(23, 40), t(23, 59), rules))
+        assertEquals(QuietClash.NONE, quietClash(t(0, 40), t(5, 0), rules.copy(quietEnabled = false)))
+    }
 }

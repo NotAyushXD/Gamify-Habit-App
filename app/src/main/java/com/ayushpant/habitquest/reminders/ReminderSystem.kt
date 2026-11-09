@@ -92,7 +92,8 @@ private fun BroadcastReceiver.runAsync(block: suspend () -> Unit) {
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) = runAsync {
         val app = context.applicationContext as HabitQuestApp
-        if (ReminderScheduler.inCall(context) || HabitListenerService.isNavigating()) {
+        // In quiet hours popups are dropped anyway, so there is nothing to wait for: no 60 s retries all night.
+        if (!app.reminders.inQuietHoursNow() && (ReminderScheduler.inCall(context) || HabitListenerService.isNavigating())) {
             Log.i(LOG_TAG, "In a call or navigating: reminders wait")
             ReminderScheduler.setAlarm(context, app.reminders.retryMillis())
             return@runAsync
