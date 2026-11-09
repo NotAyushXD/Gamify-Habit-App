@@ -79,6 +79,9 @@ sealed interface PopupModel {
         val start: LocalTime,
         val end: LocalTime,
         val evidence: Boolean,
+        /** Found later in the app-usage record (spec 5.2), not live. [appName] is the app that was open. */
+        val catchUp: Boolean = false,
+        val appName: String? = null,
     ) : PopupModel {
         override val logId = -2L
         val minutes: Long get() = java.time.Duration.between(start, end).toMinutes()
@@ -292,8 +295,20 @@ class ReminderRepository(
         val s = habits.session(sessionId) ?: return null
         if (s.status != com.ayushpant.habitquest.data.SessionStatus.SUGGESTED || s.endTime == null) return null
         val habit = db.habits().get(s.habitId) ?: return null
-        return PopupModel.Confirm(s.id, habit.name, toLocal(s.startTime).toLocalTime(), toLocal(s.endTime).toLocalTime(), s.evidenceFound)
+        return PopupModel.Confirm(
+            s.id, habit.name, toLocal(s.startTime).toLocalTime(), toLocal(s.endTime).toLocalTime(), s.evidenceFound,
+            catchUp = s.source == com.ayushpant.habitquest.data.SessionSource.CATCH_UP, appName = habit.sourcePackage,
+        )
     }
+
+    /** True now if popups must wait (quiet hours). A waiting suggestion stays on the Today tile. */
+    suspend fun inQuietHoursNow(): Boolean = inQuietHours(now().toLocalTime(), settings().toRules())
+
+    suspend fun catchUpSince(): Long? = db.appState().get(KEY_CATCH_UP_SINCE)?.toLongOrNull()
+
+    suspend fun setCatchUpSince(millis: Long) = db.appState().put(AppState(KEY_CATCH_UP_SINCE, millis.toString()))
+
+
 
     suspend fun confirmDetected(sessionId: Long) = habits.confirmSuggestion(sessionId)
     suspend fun rejectDetected(sessionId: Long) = habits.rejectSuggestion(sessionId)
@@ -339,5 +354,6 @@ class ReminderRepository(
     private companion object {
         const val KEY_TASKS_POPUP = "tasks_popup."
         const val KEY_POPUP_Y = "popup_y"
+        const val KEY_CATCH_UP_SINCE = "catch_up_since"
     }
 }

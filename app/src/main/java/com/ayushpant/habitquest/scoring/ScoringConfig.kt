@@ -61,6 +61,14 @@ data class ScoringConfig(
     /** This much audio is "evidence" for the ×1.2 evidence factor. */
     val evidenceAudioMinutes: Long = 5,
 
+    // Catch-up (spec 5.2, 6.3): sessions found later in Android's app-usage record.
+    /** Leaving the app for less than this does not end the session (spec 5.1 step 7: 2 minutes). */
+    val usageGapMinutes: Long = 2,
+    /** The app must be on screen at least this long to count. */
+    val catchUpMinMinutes: Long = 3,
+    /** How far back the catch-up looks the first time (Android keeps a few days). */
+    val catchUpLookbackHours: Long = 48,
+
     // Levels (decision after the spec, brought forward from Step 5): lifetime points give a level.
     // Level n starts at levelStep × n × (n − 1) / 2 points: 0, 50, 150, 300, 500, 750, …
     val levelStep: Int = 50,

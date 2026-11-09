@@ -370,7 +370,12 @@ class HabitRepository(
         val day = Instant.ofEpochMilli(start).atZone(clock.zone).toLocalDate()
         val sessions = db.sessions().getForDay(day).filter { it.habitId == habit.id }
         if (sessions.any { it.status == SessionStatus.CONFIRMED }) return null
-        if (sessions.any { it.status == SessionStatus.SUGGESTED && it.endTime != null && it.startTime < end && it.endTime > start }) return null
+        // Already suggested, or the user already said "Not done" to this time: do not ask again.
+        if (sessions.any {
+                (it.status == SessionStatus.SUGGESTED || it.status == SessionStatus.REJECTED) &&
+                    it.endTime != null && it.startTime < end && it.endTime > start
+            }
+        ) return null
         val id = db.sessions().insert(
             Session(
                 habitId = habit.id, day = day, startTime = start, endTime = end,

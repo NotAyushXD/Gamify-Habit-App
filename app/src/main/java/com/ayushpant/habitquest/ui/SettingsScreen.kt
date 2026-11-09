@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ayushpant.habitquest.BuildConfig
 import com.ayushpant.habitquest.data.ReminderKind
+import com.ayushpant.habitquest.detect.CatchUp
 import com.ayushpant.habitquest.detect.HabitListenerService
 import com.ayushpant.habitquest.data.ReminderResult
 import com.ayushpant.habitquest.data.Settings
@@ -85,6 +86,7 @@ fun SettingsScreen(reminders: ReminderRepository, onLinkHabit: (habitId: Long) -
     val notify = remember(refresh) { ReminderScheduler.canNotify(context) }
     val exact = remember(refresh) { ReminderScheduler.canUseExactAlarms(context) }
     val listener = remember(refresh) { HabitListenerService.isAllowed(context) }
+    val usage = remember(refresh) { CatchUp.hasUsageAccess(context) }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
 
     fun save(change: (Settings) -> Settings) {
@@ -152,7 +154,7 @@ fun SettingsScreen(reminders: ReminderRepository, onLinkHabit: (habitId: Long) -
             }
 
             Section("Track a habit with an app") {
-                AppHabitGuide(reminders, notificationAccess = listener, popups = overlay, onLinkHabit = onLinkHabit)
+                AppHabitGuide(reminders, notificationAccess = listener, popups = overlay, usageAccess = usage, onLinkHabit = onLinkHabit)
             }
 
             val s = settings ?: return@Column
@@ -214,6 +216,7 @@ private fun AppHabitGuide(
     reminders: ReminderRepository,
     notificationAccess: Boolean,
     popups: Boolean,
+    usageAccess: Boolean,
     onLinkHabit: (Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -241,7 +244,12 @@ private fun AppHabitGuide(
         "So the \"Did you do it?\" question can appear over the app. Without it, it comes as a notification.") {
         if (!popups) GuideButton("Turn it on") { openOverlaySetting(context) }
     }
-    GuideStep(4, null, "Use the app as usual",
+    GuideStep(4, usageAccess, "Allow Usage access (for apps opened without audio)",
+        "Every hour Habit Quest looks at when your linked apps were on screen, to catch sessions the audio did not show " +
+            "(a silent timer, or the phone had just restarted). It asks you to confirm each one.") {
+        if (!usageAccess) GuideButton("Turn it on") { openUsageAccess(context) }
+    }
+    GuideStep(5, null, "Use the app as usual",
         "Start it from the habit's tile or open it directly. About a minute after the audio stops, you are asked: " +
             "Confirm ✓ or Not done. 5 min or more of audio gives the ×1.2 evidence bonus; under 2 min is ignored.") {
         for (h in appHabits) {
@@ -277,8 +285,8 @@ private fun AppHabitGuide(
         )
     }
     Text(
-        "Works with apps that play audio with a media control (most meditation, sleep and podcast apps). " +
-            "Apps that only show text or a timer cannot be detected yet: tick those by hand.",
+        "Audio apps are noticed about a minute after the audio stops. Apps without audio are noticed within the hour " +
+            "with Usage access (3 min or more on screen). You can always tick a habit by hand.",
         style = MaterialTheme.typography.bodySmall,
     )
 }
@@ -296,6 +304,13 @@ private fun openNotificationAccess(context: android.content.Context) {
 /** App info, where "⋮ → Allow restricted settings" is (for apps installed from a file). */
 private fun openAppInfo(context: android.content.Context) {
     context.startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri()))
+}
+
+/** Opens "Usage access" (Habit Quest's own page where the phone supports it). */
+private fun openUsageAccess(context: android.content.Context) {
+    val direct = Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS, "package:${context.packageName}".toUri())
+    val list = Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS)
+    context.startActivity(if (direct.resolveActivity(context.packageManager) != null) direct else list)
 }
 
 private fun openOverlaySetting(context: android.content.Context) {

@@ -100,15 +100,19 @@ fun PopupCard(
                     act { reminders.saveChecklist(model.logId, h, t) }
                 })
                 is PopupModel.Confirm -> {
-                    Header("Did you do ${model.habitName}?", onClose = onFinished) // closing keeps it on Today
+                    val title = if (model.catchUp) "Did you do ${model.habitName} at ${model.start.format(HHMM)}?" else "Did you do ${model.habitName}?"
+                    Header(title, onClose = onFinished) // closing keeps it on Today
                     Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             "${model.minutes} min, ${model.start.format(HHMM)}–${model.end.format(HHMM)}",
                             style = MaterialTheme.typography.headlineSmall,
                         )
                         Text(
-                            if (model.evidence) "The audio played the whole time: ×1.2 evidence bonus."
-                            else "Short session: no evidence bonus, it still counts.",
+                            when {
+                                model.catchUp -> "Found in your app use: the app was open then. Confirm if it was this habit."
+                                model.evidence -> "The audio played the whole time: ×1.2 evidence bonus."
+                                else -> "Short session: no evidence bonus, it still counts."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Button(onClick = { act { reminders.confirmDetected(model.sessionId) } }, modifier = Modifier.fillMaxWidth()) {

@@ -3,6 +3,7 @@ package com.ayushpant.habitquest
 import android.app.Application
 import com.ayushpant.habitquest.data.AppDatabase
 import com.ayushpant.habitquest.data.HabitRepository
+import com.ayushpant.habitquest.detect.CatchUp
 import com.ayushpant.habitquest.reminders.PopupPresenter
 import com.ayushpant.habitquest.reminders.ReminderRepository
 import com.ayushpant.habitquest.reminders.ReminderScheduler
@@ -28,6 +29,7 @@ class HabitQuestApp : Application() {
         super.onCreate()
         PopupPresenter.createChannels(this)
         DayCloseWorker.schedule(this)
+        CatchUp.schedule(this)
         rescheduleReminders()
     }
 

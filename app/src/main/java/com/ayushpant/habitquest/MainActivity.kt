@@ -29,7 +29,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.ayushpant.habitquest.detect.CatchUp
 import com.ayushpant.habitquest.ui.EditorScreen
+import kotlinx.coroutines.launch
 import com.ayushpant.habitquest.ui.HabitQuestTheme
 import com.ayushpant.habitquest.ui.HistoryScreen
 import com.ayushpant.habitquest.ui.HistoryViewModel
@@ -52,6 +54,13 @@ private val TABS = listOf(
 
 /** The app's single window. Screens are switched inside it by the NavHost below. */
 class MainActivity : ComponentActivity() {
+    /** Each time the app comes to the front, look for sessions the live signal missed (spec 5.2). */
+    override fun onResume() {
+        super.onResume()
+        val app = application as HabitQuestApp
+        app.appScope.launch { runCatching { CatchUp.run(app) } }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

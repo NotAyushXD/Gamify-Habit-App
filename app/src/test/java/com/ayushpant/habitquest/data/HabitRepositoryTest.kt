@@ -525,4 +525,18 @@ class HabitRepositoryTest {
         repo.tickHabit(id)
         assertNull(repo.suggestDetected("meditofoundation.medito", ms(7, 15), ms(7, 25), true, SessionSource.LIVE)) // done
     }
+
+    @Test
+    fun `catch-up does not ask again about a time the user said Not done to`() = runBlocking {
+        val id = appHabit()
+        setTime(monday, 9, 0)
+        val live = repo.suggestDetected("meditofoundation.medito", ms(7, 0), ms(7, 12), true, SessionSource.LIVE)!!
+        repo.rejectSuggestion(live)
+        assertNull(repo.suggestDetected("meditofoundation.medito", ms(6, 58), ms(7, 14), false, SessionSource.CATCH_UP))
+        // A different time the same day is still asked about.
+        val later = repo.suggestDetected("meditofoundation.medito", ms(8, 0), ms(8, 15), false, SessionSource.CATCH_UP)!!
+        assertEquals(SessionSource.CATCH_UP, habitToday(id).suggested!!.source)
+        repo.confirmSuggestion(later)
+        assertEquals(6, habitToday(id).points) // 08:00 is within 1 h after 07:30: 0.6; catch-up has no evidence
+    }
 }
