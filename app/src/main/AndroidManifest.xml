@@ -17,6 +17,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!-- Zone habits (spec 5.3, 11): Play Services watches the zones, also when the app is closed. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
     <!-- Catch-up (spec 5.2): read when linked apps were on screen. The user grants it in "Usage access". -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -79,6 +84,10 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <receiver
+            android:name=".detect.GeofenceReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".reminders.ReminderReceiver"

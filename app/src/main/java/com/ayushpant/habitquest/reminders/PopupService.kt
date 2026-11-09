@@ -63,11 +63,14 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
         )
         val ids = intent?.getLongArrayExtra(EXTRA_LOG_IDS) ?: longArrayOf()
         val sessionIds = intent?.getLongArrayExtra(EXTRA_SESSION_IDS) ?: longArrayOf()
+        val zoneHabits = intent?.getLongArrayExtra(EXTRA_ZONE_HABITS) ?: longArrayOf()
+        val zoneTime = intent?.getLongExtra(EXTRA_ZONE_TIME, 0L) ?: 0L
         lifecycleScope.launch {
             val reminders = (application as HabitQuestApp).reminders
             savedY = reminders.popupY()
             for (id in ids) reminders.popupFor(id)?.let { queue.addLast(it) }
             for (id in sessionIds) reminders.confirmationFor(id)?.let { queue.addLast(it) }
+            for (id in zoneHabits) reminders.zoneCheckFor(id, zoneTime)?.let { queue.addLast(it) }
             showNext()
         }
         return START_NOT_STICKY
@@ -169,10 +172,19 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
     companion object {
         private const val EXTRA_LOG_IDS = "log_ids"
         private const val EXTRA_SESSION_IDS = "session_ids"
+        private const val EXTRA_ZONE_HABITS = "zone_habits"
+        private const val EXTRA_ZONE_TIME = "zone_time"
         private const val NOTIFICATION_ID = 1001
 
         fun start(context: Context, logIds: LongArray) {
             context.startForegroundService(Intent(context, PopupService::class.java).putExtra(EXTRA_LOG_IDS, logIds))
+        }
+
+        /** "At the gym. Are you working out now?" (spec 5.3 step 4). */
+        fun startZoneCheck(context: Context, habitIds: LongArray, dwellAt: Long) {
+            context.startForegroundService(
+                Intent(context, PopupService::class.java).putExtra(EXTRA_ZONE_HABITS, habitIds).putExtra(EXTRA_ZONE_TIME, dwellAt)
+            )
         }
 
         /** Confirmation popups for detected sessions (spec 5.1 step 9). */

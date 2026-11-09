@@ -372,12 +372,14 @@ private fun HabitTile(
                         "🎧 Detected ${timeOf(s).format(HHMM)}–${java.time.Instant.ofEpochMilli(s.endTime!!).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(HHMM)}" +
                             " (${(s.endTime - s.startTime) / 60_000} min). Was it you?"
                     }
+                    h.inProgress != null && h.habit.type == HabitType.ZONE -> "📍 There since ${timeOf(h.inProgress).format(HHMM)} · ends when you leave"
                     h.inProgress != null -> "In progress since ${timeOf(h.inProgress).format(HHMM)}"
                     h.promise != null -> "🤝 You promised: today at ${java.time.Instant.ofEpochMilli(h.promise.dueAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(HHMM)}"
                     h.skip?.promised == true -> "Skipped today · promise made"
                     h.skip != null -> "Skipped today"
                     !h.scheduledToday -> "Not scheduled today"
                     isApp -> "Not done — tap to open the app"
+                    h.habit.type == HabitType.ZONE -> "Not done — you'll be asked when you get there"
                     else -> "Not done — tap to start"
                 }
                 Text(status, style = MaterialTheme.typography.bodySmall)

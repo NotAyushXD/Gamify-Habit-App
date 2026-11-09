@@ -87,6 +87,17 @@ sealed interface PopupModel {
         val minutes: Long get() = java.time.Duration.between(start, end).toMinutes()
     }
 
+    /** Spec 5.3 step 4: "At the gym. Are you working out now?" */
+    data class ZoneCheck(
+        val habitId: Long,
+        val habitName: String,
+        val zoneName: String,
+        /** When the dwell was detected (epoch ms); the session starts 5 min before it. */
+        val dwellAt: Long,
+    ) : PopupModel {
+        override val logId = -3L
+    }
+
     /** From the "Test popup" button in Settings. */
     data object Test : PopupModel {
         override val logId = -1L
@@ -309,6 +320,14 @@ class ReminderRepository(
     suspend fun setCatchUpSince(millis: Long) = db.appState().put(AppState(KEY_CATCH_UP_SINCE, millis.toString()))
 
 
+
+    suspend fun zoneCheckFor(habitId: Long, dwellAt: Long): PopupModel.ZoneCheck? {
+        val habit = db.habits().get(habitId) ?: return null
+        val zone = habit.zoneId?.let { db.zones().get(it) } ?: return null
+        return PopupModel.ZoneCheck(habit.id, habit.name, zone.name, dwellAt)
+    }
+
+    suspend fun startZoneSession(habitId: Long, dwellAt: Long) = habits.startZoneSession(habitId, dwellAt)
 
     suspend fun confirmDetected(sessionId: Long) = habits.confirmSuggestion(sessionId)
     suspend fun rejectDetected(sessionId: Long) = habits.rejectSuggestion(sessionId)

@@ -4,6 +4,7 @@ import android.app.Application
 import com.ayushpant.habitquest.data.AppDatabase
 import com.ayushpant.habitquest.data.HabitRepository
 import com.ayushpant.habitquest.detect.CatchUp
+import com.ayushpant.habitquest.detect.Geofences
 import com.ayushpant.habitquest.reminders.PopupPresenter
 import com.ayushpant.habitquest.reminders.ReminderRepository
 import com.ayushpant.habitquest.reminders.ReminderScheduler
@@ -36,5 +37,6 @@ class HabitQuestApp : Application() {
     /** Any change can move the next reminder, so the alarm is set again. */
     fun rescheduleReminders() {
         appScope.launch { ReminderScheduler.reschedule(this@HabitQuestApp) }
+        appScope.launch { runCatching { Geofences.sync(this@HabitQuestApp) } } // zones may have changed too
     }
 }

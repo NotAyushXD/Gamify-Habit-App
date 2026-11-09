@@ -99,6 +99,17 @@ fun PopupCard(
                 is PopupModel.Checklist -> ChecklistContent(model, onClose = { act { reminders.close(model.logId) } }, onSave = { h, t ->
                     act { reminders.saveChecklist(model.logId, h, t) }
                 })
+                is PopupModel.ZoneCheck -> {
+                    Header("At ${model.zoneName}", onClose = onFinished)
+                    Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Are you doing ${model.habitName} now?", style = MaterialTheme.typography.titleMedium)
+                        Text("Say yes and the session starts from when you arrived. It ends when you leave.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = { act { reminders.startZoneSession(model.habitId, model.dwellAt) } }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Yes 💪")
+                        }
+                        OutlinedButton(onClick = onFinished, modifier = Modifier.fillMaxWidth()) { Text("No") }
+                    }
+                }
                 is PopupModel.Confirm -> {
                     val title = if (model.catchUp) "Did you do ${model.habitName} at ${model.start.format(HHMM)}?" else "Did you do ${model.habitName}?"
                     Header(title, onClose = onFinished) // closing keeps it on Today

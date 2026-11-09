@@ -16,7 +16,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,7 +70,7 @@ enum class ItemKind { HABIT, TASK }
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone: () -> Unit, startWithApp: Boolean = false) {
+fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone: () -> Unit, startType: HabitType? = null) {
     val cfg = ScoringConfig.DEFAULT
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -85,8 +87,12 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     var windowEnd by remember { mutableStateOf(LocalTime.of(8, 0)) }
     var daysMask by remember { mutableStateOf(EVERY_DAY_MASK) }
     // App habit (Step 3): opens and watches an app, e.g. a meditation app.
-    var habitType by remember { mutableStateOf(if (startWithApp) HabitType.APP else HabitType.MANUAL) }
+    var habitType by remember { mutableStateOf(startType ?: HabitType.MANUAL) }
     var sourcePackage by remember { mutableStateOf<String?>(null) }
+    // Zone habit (Step 4): done at a place, e.g. the gym.
+    var zoneId by remember { mutableStateOf<Long?>(null) }
+    var addingZone by remember { mutableStateOf(false) }
+    val zones by repo.observeZones().collectAsStateWithLifecycle(initialValue = emptyList())
     var pickingApp by remember { mutableStateOf(false) }
 
     // Mind / Body / Soul: suggested from the name until the user taps a chip.
@@ -106,8 +112,9 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 windowStart = h.windowStart
                 windowEnd = h.windowEnd
                 daysMask = h.daysMask
-                habitType = if (h.type == HabitType.APP || startWithApp) HabitType.APP else HabitType.MANUAL
+                habitType = startType ?: h.type
                 sourcePackage = h.sourcePackage
+                zoneId = h.zoneId
                 dims = dimensionsOf(h.mbsMask)
                 dimsTouched = h.mbsMask != 0
             }
@@ -142,7 +149,11 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
 
     val windowValid = windowStart < windowEnd
     val canSave = name.isNotBlank() && when (kind) {
-        ItemKind.HABIT -> windowValid && daysMask != 0 && (habitType == HabitType.MANUAL || sourcePackage != null)
+        ItemKind.HABIT -> windowValid && daysMask != 0 && when (habitType) {
+            HabitType.MANUAL -> true
+            HabitType.APP -> sourcePackage != null
+            HabitType.ZONE -> zoneId != null && zones.any { it.id == zoneId }
+        }
         ItemKind.TASK -> true
     }
     val noun = if (kind == ItemKind.HABIT) "habit" else "task"
@@ -265,11 +276,14 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 Column {
                     Text("How do you do it?", style = MaterialTheme.typography.titleSmall)
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        SegmentedButton(selected = habitType == HabitType.MANUAL, onClick = { habitType = HabitType.MANUAL }, shape = SegmentedButtonDefaults.itemShape(0, 2)) {
+                        SegmentedButton(selected = habitType == HabitType.MANUAL, onClick = { habitType = HabitType.MANUAL }, shape = SegmentedButtonDefaults.itemShape(0, 3)) {
                             Text("Manual")
                         }
-                        SegmentedButton(selected = habitType == HabitType.APP, onClick = { habitType = HabitType.APP }, shape = SegmentedButtonDefaults.itemShape(1, 2)) {
-                            Text("With an app")
+                        SegmentedButton(selected = habitType == HabitType.APP, onClick = { habitType = HabitType.APP }, shape = SegmentedButtonDefaults.itemShape(1, 3)) {
+                            Text("App")
+                        }
+                        SegmentedButton(selected = habitType == HabitType.ZONE, onClick = { habitType = HabitType.ZONE }, shape = SegmentedButtonDefaults.itemShape(2, 3)) {
+                            Text("At a place")
                         }
                     }
                     if (habitType == HabitType.APP) {
@@ -281,8 +295,20 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                                 "the session (needs Notification access in Settings). You can always tick it by hand too.",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    } else if (habitType == HabitType.ZONE) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                            for (z in zones) {
+                                FilterChip(selected = zoneId == z.id, onClick = { zoneId = z.id }, label = { Text("📍 ${z.name}") })
+                            }
+                            AssistChip(onClick = { addingZone = true }, label = { Text("+ New zone") })
+                        }
+                        Text(
+                            "Stay at the place 5 minutes and Habit Quest asks if you're doing it; leave and it asks you to confirm. " +
+                                "30 min or more there gives the ×1.2 bonus. Needs location \"Allow all the time\" (Settings).",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     } else {
-                        Text("You tick it yourself, or tap Start and Done. Zone habits come in a later step.", style = MaterialTheme.typography.bodySmall)
+                        Text("You tick it yourself, or tap Start and Done.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -303,6 +329,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                                         name = name.trim(), windowStart = windowStart, windowEnd = windowEnd,
                                         daysMask = daysMask, mbsMask = maskOf(dims),
                                         type = habitType, sourcePackage = if (habitType == HabitType.APP) sourcePackage else null,
+                                        zoneId = if (habitType == HabitType.ZONE) zoneId else null,
                                     )
                                 )
                             }
@@ -324,6 +351,14 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 }
             }
         }
+    }
+
+    if (addingZone) {
+        ZoneEditorDialog(
+            initial = null,
+            onSave = { z -> scope.launch { zoneId = repo.saveZone(z) }; addingZone = false },
+            onDismiss = { addingZone = false },
+        )
     }
 
     if (pickingApp) {

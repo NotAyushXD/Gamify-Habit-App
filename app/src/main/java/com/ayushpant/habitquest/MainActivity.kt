@@ -30,7 +30,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ayushpant.habitquest.detect.CatchUp
+import com.ayushpant.habitquest.data.HabitType
 import com.ayushpant.habitquest.ui.EditorScreen
+import com.ayushpant.habitquest.ui.ZonesScreen
 import kotlinx.coroutines.launch
 import com.ayushpant.habitquest.ui.HabitQuestTheme
 import com.ayushpant.habitquest.ui.HistoryScreen
@@ -118,17 +120,23 @@ class MainActivity : ComponentActivity() {
                             val vm: SummaryViewModel = viewModel(factory = viewModelFactory { initializer { SummaryViewModel(repo) } })
                             SummaryScreen(vm)
                         }
+                        composable("zones") { ZonesScreen(repo, onBack = { nav.popBackStack() }) }
                         composable("settings") {
-                            SettingsScreen(app.reminders, onLinkHabit = { id -> nav.navigate("habit/$id?app=true") })
+                            SettingsScreen(
+                                app.reminders,
+                                onLinkHabit = { id, type -> nav.navigate("habit/$id?type=${type.name}") },
+                                onZones = { nav.navigate("zones") },
+                                onPermissionsChanged = { app.rescheduleReminders() },
+                            )
                         }
                         // id 0 = new item; the editor then shows the Habit | Task switch.
                         for ((r, kind) in listOf("habit" to ItemKind.HABIT, "task" to ItemKind.TASK)) {
                             composable(
-                                "$r/{id}?app={app}",
+                                "$r/{id}?type={type}",
                                 arguments = listOf(
                                     navArgument("id") { type = NavType.LongType },
-                                    // From the Settings guide: open with "With an app" already chosen.
-                                    navArgument("app") { type = NavType.BoolType; defaultValue = false },
+                                    // From the Settings guides: open with "App" or "At a place" already chosen.
+                                    navArgument("type") { type = NavType.StringType; defaultValue = "" },
                                 ),
                             ) { e ->
                                 EditorScreen(
@@ -136,7 +144,7 @@ class MainActivity : ComponentActivity() {
                                     initialKind = kind,
                                     id = e.arguments?.getLong("id") ?: 0L,
                                     onDone = { nav.popBackStack() },
-                                    startWithApp = e.arguments?.getBoolean("app") ?: false,
+                                    startType = e.arguments?.getString("type")?.let { t -> HabitType.entries.firstOrNull { it.name == t } },
                                 )
                             }
                         }

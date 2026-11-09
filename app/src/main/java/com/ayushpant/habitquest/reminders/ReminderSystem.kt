@@ -115,7 +115,10 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in actions) return
-        runAsync { ReminderScheduler.reschedule(context) }
+        runAsync {
+            ReminderScheduler.reschedule(context)
+            com.ayushpant.habitquest.detect.Geofences.sync(context) // geofences are lost after a restart
+        }
     }
 }
 
@@ -152,6 +155,40 @@ object PopupPresenter {
         for (id in logIds) {
             val model = app.reminders.popupFor(id) ?: continue
             notify(context, id, model)
+        }
+    }
+
+    /** The zone check (spec 5.3): over other apps, or as a notification that opens it in the app. */
+    suspend fun showZoneCheck(context: Context, habitIds: List<Long>, dwellAt: Long) {
+        if (ReminderScheduler.canDrawOverlays(context)) {
+            try {
+                PopupService.startZoneCheck(context, habitIds.toLongArray(), dwellAt)
+                return
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Popup service could not start, using a notification", e)
+            }
+        }
+        val app = context.applicationContext as HabitQuestApp
+        if (!ReminderScheduler.canNotify(context)) return
+        for (id in habitIds) {
+            val model = app.reminders.zoneCheckFor(id, dwellAt) ?: continue
+            val open = PendingIntent.getActivity(
+                context, (200_000 + id).toInt(),
+                Intent(context, PopupActivity::class.java).putExtra(PopupActivity.EXTRA_ZONE_HABIT, id).putExtra(PopupActivity.EXTRA_ZONE_TIME, dwellAt),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val notification = NotificationCompat.Builder(context, CHANNEL_REMINDERS)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("At ${model.zoneName}")
+                .setContentText("Are you doing ${model.habitName} now?")
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            try {
+                NotificationManagerCompat.from(context).notify((200_000 + id).toInt(), notification)
+            } catch (e: SecurityException) {
+                Log.w(LOG_TAG, "Notification permission missing", e)
+            }
         }
     }
 
@@ -204,6 +241,7 @@ object PopupPresenter {
             is PopupModel.Reminder -> popupTitle(model) to "Tap to start, snooze or skip."
             is PopupModel.Checklist -> "11 PM checklist" to "Tick what you did today."
             is PopupModel.Confirm -> "Did you do ${model.habitName}?" to "${model.minutes} min detected. Tap to confirm."
+            is PopupModel.ZoneCheck -> "At ${model.zoneName}" to "Are you doing ${model.habitName} now?"
             PopupModel.Test -> "Test reminder" to "Notifications work. Allow \"Display over other apps\" for popups."
         }
         val open = PendingIntent.getActivity(

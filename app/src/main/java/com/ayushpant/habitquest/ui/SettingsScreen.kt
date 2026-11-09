@@ -46,7 +46,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ayushpant.habitquest.BuildConfig
 import com.ayushpant.habitquest.data.ReminderKind
+import com.ayushpant.habitquest.data.HabitType
 import com.ayushpant.habitquest.detect.CatchUp
+import com.ayushpant.habitquest.detect.Geofences
 import com.ayushpant.habitquest.detect.HabitListenerService
 import com.ayushpant.habitquest.data.ReminderResult
 import com.ayushpant.habitquest.data.Settings
@@ -65,7 +67,13 @@ private val HHMM = DateTimeFormatter.ofPattern("HH:mm")
 /** Settings (spec 9, 11): permission status, quiet hours, checklist, reminder limit. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(reminders: ReminderRepository, onLinkHabit: (habitId: Long) -> Unit = {}) {
+fun SettingsScreen(
+    reminders: ReminderRepository,
+    onLinkHabit: (habitId: Long, type: HabitType) -> Unit = { _, _ -> },
+    onZones: () -> Unit = {},
+    /** A permission may have changed: register zones and alarms again. */
+    onPermissionsChanged: () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by reminders.observeSettings().collectAsStateWithLifecycle(initialValue = null)
@@ -76,6 +84,7 @@ fun SettingsScreen(reminders: ReminderRepository, onLinkHabit: (habitId: Long) -
     var refresh by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) {
         refresh++
+        onPermissionsChanged() // the user may come back from a phone setting
         onPauseOrDispose { }
     }
     LaunchedEffect(refresh, settings) {
@@ -87,6 +96,12 @@ fun SettingsScreen(reminders: ReminderRepository, onLinkHabit: (habitId: Long) -
     val exact = remember(refresh) { ReminderScheduler.canUseExactAlarms(context) }
     val listener = remember(refresh) { HabitListenerService.isAllowed(context) }
     val usage = remember(refresh) { CatchUp.hasUsageAccess(context) }
+    val locationNow = remember(refresh) { Geofences.hasForegroundLocation(context) }
+    val locationAlways = remember(refresh) { Geofences.hasBackgroundLocation(context) }
+    // After a location answer: register the zones again (they need "all the time").
+    val askLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh++; onPermissionsChanged() }
+    // Android 11+ opens the location page of the app's settings, where "Allow all the time" is.
+    val askBackground = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++; onPermissionsChanged() }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
 
     fun save(change: (Settings) -> Settings) {
@@ -154,7 +169,14 @@ fun SettingsScreen(reminders: ReminderRepository, onLinkHabit: (habitId: Long) -
             }
 
             Section("Track a habit with an app") {
-                AppHabitGuide(reminders, notificationAccess = listener, popups = overlay, usageAccess = usage, onLinkHabit = onLinkHabit)
+                AppHabitGuide(reminders, notificationAccess = listener, popups = overlay, usageAccess = usage, onLinkHabit = { onLinkHabit(it, HabitType.APP) })
+            }
+
+            Section("Track a habit at a place") {
+                ZoneHabitGuide(reminders, foreground = locationNow, background = locationAlways, onZones = onZones,
+                    onLinkHabit = { onLinkHabit(it, HabitType.ZONE) }, askForeground = {
+                        askLocation.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                    }, askBackground = { askBackground.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION) })
             }
 
             val s = settings ?: return@Column
@@ -259,36 +281,85 @@ private fun AppHabitGuide(
     }
 
     if (choosing) {
-        AlertDialog(
-            onDismissRequest = { choosing = false },
-            title = { Text("Which habit uses an app?") },
-            text = {
-                Column {
-                    for (h in allHabits) {
-                        val linked = h.sourcePackage?.let { " · ${appLabel(context, it) ?: it}" } ?: ""
-                        Text(
-                            h.name + linked,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.fillMaxWidth().clickable { choosing = false; onLinkHabit(h.id) }.padding(vertical = 12.dp),
-                        )
-                    }
-                    Text(
-                        "+ New habit",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.fillMaxWidth().clickable { choosing = false; onLinkHabit(0L) }.padding(vertical = 12.dp),
-                    )
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { choosing = false }) { Text("Cancel") } },
-        )
+        HabitChooser("Which habit uses an app?", allHabits, label = { h -> h.sourcePackage?.let { " · ${appLabel(context, it) ?: it}" } ?: "" },
+            onPick = { choosing = false; onLinkHabit(it) }, onDismiss = { choosing = false })
     }
     Text(
         "Audio apps are noticed about a minute after the audio stops. Apps without audio are noticed within the hour " +
             "with Usage access (3 min or more on screen). You can always tick a habit by hand.",
         style = MaterialTheme.typography.bodySmall,
     )
+}
+
+/** Pick one of the habits (or a new one, id 0). */
+@Composable
+private fun HabitChooser(
+    title: String,
+    habits: List<com.ayushpant.habitquest.data.Habit>,
+    label: (com.ayushpant.habitquest.data.Habit) -> String,
+    onPick: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                for (h in habits) {
+                    Text(
+                        h.name + label(h),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth().clickable { onPick(h.id) }.padding(vertical = 12.dp),
+                    )
+                }
+                Text(
+                    "+ New habit",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth().clickable { onPick(0L) }.padding(vertical = 12.dp),
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Set-up for zone habits (spec 5.3, 11), each step with its check and a button. */
+@Composable
+private fun ZoneHabitGuide(
+    reminders: ReminderRepository,
+    foreground: Boolean,
+    background: Boolean,
+    onZones: () -> Unit,
+    onLinkHabit: (Long) -> Unit,
+    askForeground: () -> Unit,
+    askBackground: () -> Unit,
+) {
+    val habits by reminders.observeActiveHabits().collectAsStateWithLifecycle(initialValue = emptyList())
+    val zoneHabits = habits.filter { it.type == HabitType.ZONE && it.zoneId != null }
+    var choosing by remember { mutableStateOf(false) }
+    Text(
+        "For habits you do somewhere, like the gym: stay 5 minutes and Habit Quest asks if you're doing it, " +
+            "leave and it asks you to confirm. Driving past does nothing. Your location stays on the phone.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    GuideStep(1, foreground, "Allow location", "Needed to save a place and to know when you are there.") {
+        if (!foreground) GuideButton("Allow") { askForeground() }
+    }
+    GuideStep(2, if (foreground) background else false, "Choose \"Allow all the time\"",
+        "So places work while Habit Quest is closed. Android shows this as a separate choice.") {
+        if (foreground && !background) GuideButton("Allow all the time") { askBackground() }
+    }
+    GuideStep(3, zoneHabits.isNotEmpty(), "Save the place and link a habit",
+        if (zoneHabits.isEmpty()) "Add the place (best while you are there), then choose the habit." else zoneHabits.joinToString("\n") { "📍 ${it.name}" }) {
+        GuideButton("Places") { onZones() }
+        GuideButton(if (zoneHabits.isEmpty()) "Link a habit" else "Link another") { choosing = true }
+    }
+    if (choosing) {
+        HabitChooser("Which habit is done at a place?", habits, label = { h -> if (h.type == HabitType.ZONE) " · 📍" else "" },
+            onPick = { choosing = false; onLinkHabit(it) }, onDismiss = { choosing = false })
+    }
 }
 
 /** Opens Habit Quest's own switch in "Notification access" (Android 11+), or the list of apps before that. */
