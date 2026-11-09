@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,18 +32,19 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Tab
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,6 +65,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.ayushpant.habitquest.data.HabitRepository
+import com.ayushpant.habitquest.scoring.ScoringConfig
 import com.ayushpant.habitquest.stats.Badge
 import com.ayushpant.habitquest.stats.DayCell
 import com.ayushpant.habitquest.stats.Period
@@ -68,7 +73,6 @@ import com.ayushpant.habitquest.stats.Summary
 import com.ayushpant.habitquest.stats.badges
 import com.ayushpant.habitquest.stats.buildSummary
 import com.ayushpant.habitquest.stats.compare
-import com.ayushpant.habitquest.stats.highlights
 import com.ayushpant.habitquest.stats.periodRange
 import com.ayushpant.habitquest.stats.praise
 import com.ayushpant.habitquest.stats.shiftPeriod
@@ -128,67 +132,77 @@ private val DAY_LONG = DateTimeFormatter.ofPattern("EEEE d MMMM")
 private val DAY_SHORT = DateTimeFormatter.ofPattern("d MMM")
 private val MONTH = DateTimeFormatter.ofPattern("MMMM yyyy")
 
+/** Which detail panel is open (tapping a tile). */
+private enum class Detail { STREAKS, PERFECT, TASKS, PROMISES, BADGES, BALANCE, HABIT_RINGS }
+
+/**
+ * A dashboard: the rings with points and praise at the top, a points chart, a grid of tiles
+ * (tap one for its details), the habits with a ring each, and the calendar with rings per day.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SummaryScreen(vm: SummaryViewModel) {
     val period by vm.period.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
-    var view by rememberSaveable { mutableIntStateOf(0) } // 0 = Overview, 1 = Habits
+    var detail by remember { mutableStateOf<Detail?>(null) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Your progress") }) }) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            val st = state
             item {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    Period.entries.forEachIndexed { i, p ->
-                        SegmentedButton(
-                            selected = period == p,
-                            onClick = { vm.select(p) },
-                            shape = SegmentedButtonDefaults.itemShape(i, Period.entries.size),
-                        ) { Text(p.name.lowercase().replaceFirstChar { it.uppercase() }) }
-                    }
-                }
+                PeriodBar(
+                    period = period,
+                    label = st?.let { rangeLabel(period, it.current.from, it.current.to) } ?: "",
+                    canGoLater = st != null && vm.today() > st.current.to,
+                    onSelect = vm::select,
+                    onMove = vm::move,
+                )
             }
-            val st = state ?: return@LazyColumn
+            if (st == null) return@LazyColumn
             val s = st.current
             val isCurrent = vm.today() <= s.to
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { vm.move(-1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Earlier") }
-                    Text(rangeLabel(period, s.from, s.to), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { vm.move(1) }, enabled = !isCurrent) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Later") }
-                }
+            item { HeroCard(s, whenText(period, isCurrent)) }
+            if (period != Period.DAY) item { TrendCard(s, st.previous, period, isCurrent) }
+            item { TileGrid(s, onOpen = { detail = it }) }
+            if (s.habits.isNotEmpty()) item { HabitsCard(s, onSeeRings = { detail = Detail.HABIT_RINGS }) }
+            if (period != Period.DAY) item { CalendarSection(s, period, vm::openDay) }
+        }
+    }
+
+    val st = state
+    if (detail != null && st != null) {
+        ModalBottomSheet(onDismissRequest = { detail = null }) {
+            Column(
+                Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                DetailContent(detail!!, st.current)
             }
-            item {
-                PrimaryTabRow(selectedTabIndex = view) {
-                    Tab(selected = view == 0, onClick = { view = 0 }, text = { Text("Overview") })
-                    Tab(selected = view == 1, onClick = { view = 1 }, text = { Text("Habits") })
-                }
+        }
+    }
+}
+
+/** Day | Week | Month, and the arrows to go back and forth, in one compact bar. */
+@Composable
+private fun PeriodBar(period: Period, label: String, canGoLater: Boolean, onSelect: (Period) -> Unit, onMove: (Long) -> Unit) {
+    Column {
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            Period.entries.forEachIndexed { i, p ->
+                SegmentedButton(
+                    selected = period == p,
+                    onClick = { onSelect(p) },
+                    shape = SegmentedButtonDefaults.itemShape(i, Period.entries.size),
+                ) { Text(p.name.lowercase().replaceFirstChar { it.uppercase() }) }
             }
-            if (view == 0) {
-                item { HeroCard(s, whenText(period, isCurrent)) }
-                if (s.balance.any { it.planned > 0 }) item { BalanceCard(s) }
-                if (period != Period.DAY) item { CategoryCalendarCard(s, period, vm::openDay) }
-                val lines = compare(s, st.previous, thanText(period, isCurrent))
-                if (lines.isNotEmpty()) item { ComparisonCard(lines) }
-                val hl = highlights(s)
-                if (hl.isNotEmpty()) {
-                    item { Text("Highlights", style = MaterialTheme.typography.titleMedium) }
-                    items(hl.chunked(2).size) { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            for (h in hl.chunked(2)[row]) HighlightCard(h.emoji, h.title, h.value, Modifier.weight(1f))
-                            if (hl.chunked(2)[row].size == 1) Box(Modifier.weight(1f))
-                        }
-                    }
-                }
-                item { BadgesCard(badges(s)) }
-            } else {
-                item { HabitRingsCard(s) }
-                if (period != Period.DAY) item { HabitCalendarCard(s, period, vm::openDay) }
-            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { onMove(-1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Earlier") }
+            Text(label, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            IconButton(onClick = { onMove(1) }, enabled = canGoLater) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Later") }
         }
     }
 }
@@ -277,24 +291,261 @@ private fun HeroCard(s: Summary, whenText: String) {
     val p = praise(s, whenText)
     // A neutral background, so all three ring colours stand out.
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(p.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.primary)
-            Text(p.message, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
-            StackedRings(
-                rings = listOf(Ring(s.habitRate, HABITS_COLOR), Ring(s.taskRate, TASKS_COLOR), Ring(s.perfectRate, PERFECT_COLOR)),
-                size = 220.dp,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("${s.points}", fontSize = 34.sp, fontWeight = FontWeight.Bold)
-                    Text("points", style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.padding(16.dp)) {
+            Text(p.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text(p.message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StackedRings(
+                    rings = listOf(Ring(s.habitRate, HABITS_COLOR), Ring(s.taskRate, TASKS_COLOR), Ring(s.perfectRate, PERFECT_COLOR)),
+                    size = 150.dp,
+                    hole = 26.dp,
+                    gap = 3.dp,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("${s.points}", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        Text("points", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Column(Modifier.padding(start = 16.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    RingStat(HABITS_COLOR, "Habits", percent(s.habitRate), "${s.done}/${s.scheduled}")
+                    RingStat(TASKS_COLOR, "Tasks on time", percent(s.taskRate), "${s.tasks.dueInRangeOnTime}/${s.tasks.dueInRange}")
+                    RingStat(PERFECT_COLOR, "Perfect days", percent(s.perfectRate), "${s.perfectDays}/${s.plannedDays}")
                 }
             }
-            Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                LegendRow(HABITS_COLOR, "Habits", percent(s.habitRate), "${s.done} of ${s.scheduled} planned habit-days")
-                LegendRow(TASKS_COLOR, "Tasks on time", percent(s.taskRate), "${s.tasks.dueInRangeOnTime} of ${s.tasks.dueInRange} tasks due")
-                LegendRow(PERFECT_COLOR, "Perfect days", percent(s.perfectRate), "${s.perfectDays} of ${s.plannedDays} days with every habit done")
+        }
+    }
+}
+
+/** One line next to the hero rings: a big coloured value, a label and the count. */
+@Composable
+private fun RingStat(color: Color, label: String, value: String, count: String) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
+        }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = color)
+            Text("  $count", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(bottom = 3.dp))
+        }
+    }
+}
+
+/** Points per day as bars, the daily average, the best day, and how it compares (only if better). */
+@Composable
+private fun TrendCard(s: Summary, previous: Summary, period: Period, isCurrent: Boolean) {
+    val days = s.days.map { it.day }
+    val values = days.map { s.dayPoints[it] ?: 0 }
+    val elapsed = days.count { it <= s.today }.coerceAtLeast(1)
+    val average = s.points / elapsed
+    val lines = compare(s, previous, thanText(period, isCurrent))
+    val max = (values.maxOrNull() ?: 0).coerceAtLeast(1)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Points", style = MaterialTheme.typography.titleMedium)
+                    Text("$average a day on average", style = MaterialTheme.typography.bodySmall)
+                }
+                lines.firstOrNull()?.let { GrowthChip(it) }
+            }
+            Row(Modifier.fillMaxWidth().height(96.dp), horizontalArrangement = Arrangement.spacedBy(if (days.size > 7) 2.dp else 8.dp)) {
+                days.forEachIndexed { i, day ->
+                    val v = values[i]
+                    val future = day > s.today
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .fillMaxHeight(if (v == 0) 0.03f else (v.toFloat() / max).coerceAtLeast(0.05f))
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .background(
+                                    when {
+                                        future -> MaterialTheme.colorScheme.surfaceVariant
+                                        day == s.today -> MaterialTheme.colorScheme.primary
+                                        else -> HABITS_COLOR
+                                    }
+                                )
+                        )
+                    }
+                }
+            }
+            if (days.size <= 7) {
+                Row {
+                    for (day in days) {
+                        Text(day.dayOfWeek.name.take(1), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+            s.bestDay?.let { (day, pts) ->
+                Text("🏆 Best day: ${day.format(DateTimeFormatter.ofPattern("EEE d MMM"))}, +$pts", style = MaterialTheme.typography.bodySmall)
+            }
+            for (line in lines.drop(1)) Text("📈 $line", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun GrowthChip(text: String) {
+    Box(
+        Modifier.clip(RoundedCornerShape(12.dp)).background(HABITS_COLOR.copy(alpha = 0.18f)).padding(horizontal = 10.dp, vertical = 6.dp)
+    ) { Text("📈 ${text.substringBefore(" than")}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface) }
+}
+
+/** Two columns of small cards: one number each, tap for the details. */
+@Composable
+private fun TileGrid(s: Summary, onOpen: (Detail) -> Unit) {
+    val streak = s.habits.maxByOrNull { it.currentStreak }
+    val earned = badges(s)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StatTile(
+                "🔥", "Streak", "${streak?.currentStreak ?: 0} days",
+                streak?.takeIf { it.currentStreak > 0 }?.habit?.name ?: "Start one today", null, HABITS_COLOR, Modifier.weight(1f),
+            ) { onOpen(Detail.STREAKS) }
+            StatTile(
+                "⭐", "Perfect days", "${s.perfectDays} of ${s.plannedDays}",
+                "every habit done", s.perfectRate, PERFECT_COLOR, Modifier.weight(1f),
+            ) { onOpen(Detail.PERFECT) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StatTile(
+                "✅", "Tasks", "${s.tasks.completed} done",
+                "${s.tasks.openNow} open" + if (s.tasks.overdueNow > 0) " · ${s.tasks.overdueNow} late" else "", s.taskRate, TASKS_COLOR, Modifier.weight(1f),
+            ) { onOpen(Detail.TASKS) }
+            StatTile(
+                "🤝", "Promises", if (s.promisesDecided == 0) "–" else "${s.promisesKept} of ${s.promisesDecided}",
+                "kept", if (s.promisesDecided == 0) null else s.promisesKept.toDouble() / s.promisesDecided, Color(0xFFBF5AF2), Modifier.weight(1f),
+            ) { onOpen(Detail.PROMISES) }
+        }
+        if (s.balance.any { it.planned > 0 }) BalanceTile(s) { onOpen(Detail.BALANCE) }
+        val next = earned.firstOrNull { !it.earned }
+        StatTile(
+            "🏅", "Badges", "${earned.count { it.earned }} of ${earned.size}",
+            next?.let { "Next: ${it.emoji} ${it.title} · ${it.progress.coerceAtMost(it.target)}/${it.target}" } ?: "All earned!",
+            next?.ratio?.toDouble(), PERFECT_COLOR, Modifier.fillMaxWidth(),
+        ) { onOpen(Detail.BADGES) }
+    }
+}
+
+/** A small card: emoji and title, one big value, a caption, and a mini ring when there is a rate. */
+@Composable
+private fun StatTile(
+    emoji: String, title: String, value: String, caption: String, rate: Double?, color: Color,
+    modifier: Modifier, onClick: () -> Unit,
+) {
+    Card(modifier.clickable(onClick = onClick)) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("$emoji $title", style = MaterialTheme.typography.labelLarge)
+                Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                Text(caption, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+            }
+            if (rate != null) StackedRings(listOf(Ring(rate, color)), size = 40.dp, hole = 12.dp, gap = 0.dp)
+        }
+    }
+}
+
+/** Mind / Body / Soul as a full-width tile: three mini rings. */
+@Composable
+private fun BalanceTile(s: Summary, onClick: () -> Unit) {
+    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Column(Modifier.padding(14.dp)) {
+            Text("🧠💪✨ Mind · Body · Soul", style = MaterialTheme.typography.labelLarge)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                for (score in s.balance) {
+                    val d = score.dimension
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StackedRings(listOf(Ring(score.rate, d.color())), size = 44.dp, hole = 12.dp, gap = 0.dp) { Text(d.emoji, fontSize = 14.sp) }
+                        Column(Modifier.padding(start = 6.dp)) {
+                            Text(score.percentText(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = d.color())
+                            Text(d.label, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+/** One row per habit with its own ring: how consistent it was, and its streak. */
+@Composable
+private fun HabitsCard(s: Summary, onSeeRings: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Habits", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = onSeeRings) { Text("See all rings") }
+            }
+            s.habits.forEachIndexed { i, h ->
+                val color = HABIT_PALETTE[i % HABIT_PALETTE.size]
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StackedRings(listOf(Ring(h.rate, color)), size = 40.dp, hole = 12.dp, gap = 0.dp)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(h.habit.name, style = MaterialTheme.typography.bodyLarge)
+                        val streak = if (h.currentStreak > 0) "🔥 ${h.currentStreak} · " else ""
+                        Text("$streak${h.done} of ${h.scheduled} days · best ${h.bestStreak}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(percent(h.rate), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = color)
+                }
+            }
+        }
+    }
+}
+
+/** The calendar with rings per day; switch between the category rings and one ring per habit. */
+@Composable
+private fun CalendarSection(s: Summary, period: Period, onDay: (LocalDate) -> Unit) {
+    var byHabit by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(selected = !byHabit, onClick = { byHabit = false }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Overview rings") }
+            SegmentedButton(selected = byHabit, onClick = { byHabit = true }, shape = SegmentedButtonDefaults.itemShape(1, 2), enabled = s.habits.isNotEmpty()) {
+                Text("Habit rings")
+            }
+        }
+        if (byHabit) HabitCalendarCard(s, period, onDay) else CategoryCalendarCard(s, period, onDay)
+    }
+}
+
+/** What a tile opens. */
+@Composable
+private fun DetailContent(detail: Detail, s: Summary) {
+    when (detail) {
+        Detail.STREAKS -> {
+            Text("🔥 Streaks", style = MaterialTheme.typography.titleLarge)
+            Text("One freeze a week keeps a streak after a miss. After that, a miss starts it again.", style = MaterialTheme.typography.bodySmall)
+            for (h in s.habits.sortedByDescending { it.currentStreak }) {
+                Row {
+                    Text(h.habit.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Text("🔥 ${h.currentStreak} · best ${h.bestStreak}", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+        Detail.PERFECT -> {
+            Text("⭐ Perfect days", style = MaterialTheme.typography.titleLarge)
+            Text("${s.perfectDays} of ${s.plannedDays} days with every planned habit done. Each one gives +10.", style = MaterialTheme.typography.bodyMedium)
+            if (s.days.size > 1) CategoryCalendarCard(s, if (s.days.size > 7) Period.MONTH else Period.WEEK) {}
+        }
+        Detail.TASKS -> {
+            val t = s.tasks
+            Text("✅ Tasks", style = MaterialTheme.typography.titleLarge)
+            Text("${percent(s.taskRate)} on time: ${t.dueInRangeOnTime} of ${t.dueInRange} tasks due in this period", style = MaterialTheme.typography.bodyLarge)
+            Text("Completed: ${t.completed} (${t.completedOnTime} on time, ${t.completedEarly} early)")
+            t.averageDaysLate?.let { Text("Late ones were %.1f days late on average".format(it)) }
+            Text("Points from tasks: ${t.points}")
+            Text("Open now: ${t.openNow}" + if (t.overdueNow > 0) " (${t.overdueNow} overdue)" else "")
+        }
+        Detail.PROMISES -> {
+            Text("🤝 Promises", style = MaterialTheme.typography.titleLarge)
+            Text(
+                if (s.promisesDecided == 0) "No promises in this period. When you can't do a habit, \"Can't today\" lets you promise a time."
+                else "You kept ${s.promisesKept} of ${s.promisesDecided} promises. Each kept one gave +${ScoringConfig.DEFAULT.promiseKeptBonus}.",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+        Detail.BADGES -> BadgesCard(badges(s))
+        Detail.BALANCE -> BalanceCard(s)
+        Detail.HABIT_RINGS -> HabitRingsCard(s)
     }
 }
 
@@ -325,27 +576,6 @@ private fun BalanceCard(s: Summary) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ComparisonCard(lines: List<String>) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = HABITS_COLOR.copy(alpha = 0.15f))) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("📈 You're growing", style = MaterialTheme.typography.titleMedium)
-            for (line in lines) Text(line, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun HighlightCard(emoji: String, title: String, value: String, modifier: Modifier) {
-    Card(modifier) {
-        Column(Modifier.padding(14.dp)) {
-            Text(emoji, fontSize = 26.sp)
-            Text(title, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-            Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         }
     }
 }
