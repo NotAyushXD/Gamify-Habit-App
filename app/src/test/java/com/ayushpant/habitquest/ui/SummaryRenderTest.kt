@@ -15,6 +15,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.ayushpant.habitquest.balance.maskOf
 import com.ayushpant.habitquest.balance.suggestDimensions
 import com.ayushpant.habitquest.data.AppDatabase
+import com.ayushpant.habitquest.promise.PromiseScreen
+import com.ayushpant.habitquest.reminders.PromiseContext
 import com.ayushpant.habitquest.data.CreatureLine
 import com.ayushpant.habitquest.data.Habit
 import com.ayushpant.habitquest.data.HabitRepository
@@ -102,6 +104,17 @@ class SummaryRenderTest {
         compose.mainClock.advanceTimeBy(2_000)
         save(out, "today.png")
         db.close()
+    }
+
+    @Test
+    fun renderPromise() {
+        val out = File("build/render").apply { mkdirs() }
+        val ctx = PromiseContext(logId = 1, habitId = 1, habitName = "Meditate", suggestedTime = LocalTime.of(7, 0), priorMisses = 2, oathRequired = true)
+        compose.setContent {
+            HabitQuestTheme { PromiseScreen(ctx, LocalDate.of(2026, 11, 9), onPromise = { _, _, _ -> }, onBack = {}) }
+        }
+        compose.mainClock.advanceTimeBy(1_000)
+        save(out, "promise.png")
     }
 
     private fun save(dir: File, name: String) {

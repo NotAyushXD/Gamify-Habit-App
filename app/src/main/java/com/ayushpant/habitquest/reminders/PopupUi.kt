@@ -1,13 +1,19 @@
 package com.ayushpant.habitquest.reminders
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -23,18 +29,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.ayushpant.habitquest.data.ReminderKind
+import com.ayushpant.habitquest.scoring.ScoringConfig
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
 
@@ -42,14 +48,19 @@ private val HHMM = DateTimeFormatter.ofPattern("HH:mm")
 private val DUE_DAY = DateTimeFormatter.ofPattern("EEE d MMM")
 
 fun popupTitle(model: PopupModel.Reminder): String = when (model.kind) {
+    ReminderKind.PROMISE -> "You promised yourself: ${model.habitName}"
     ReminderKind.LAST_CHANCE -> "${ReminderConfig.DEFAULT.lastChanceMinutes} minutes left for ${model.habitName}"
     ReminderKind.SNOOZE -> "Reminder: ${model.habitName}"
     else -> "Time for ${model.habitName}"
 }
 
+/** Moving a popup over other apps: called with the finger's movement in pixels, and when it lets go. */
+class DragHandler(val onDrag: (dx: Float, dy: Float) -> Unit, val onDragEnd: () -> Unit)
+
 /**
  * The card shown in a popup. The same card is used over other apps (PopupService) and inside the
- * app (PopupActivity). [onFinished] runs after the user answers or closes it.
+ * app (PopupActivity). [onFinished] runs after the user answers or closes it. [openPromise] opens the
+ * promise screen ("Can't today"); the promise screen records the answer itself.
  */
 @Composable
 fun PopupCard(
@@ -57,7 +68,9 @@ fun PopupCard(
     reminders: ReminderRepository,
     scope: CoroutineScope,
     openApp: () -> Unit,
+    openPromise: (logId: Long, habitId: Long) -> Unit,
     onFinished: () -> Unit,
+    drag: DragHandler? = null,
 ) {
     fun act(block: suspend () -> Unit) {
         scope.launch {
@@ -69,22 +82,56 @@ fun PopupCard(
         modifier = Modifier.padding(16.dp).fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
     ) {
-        Column(Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 16.dp)) {
+        Column(Modifier.padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 16.dp)) {
+            if (drag != null) DragBar(drag)
             when (model) {
-                is PopupModel.Reminder -> ReminderContent(model, onClose = { act { reminders.close(model.logId) } }, act = ::act, reminders = reminders, openApp = openApp)
+                is PopupModel.Reminder -> ReminderContent(
+                    model,
+                    onClose = { act { reminders.close(model.logId) } },
+                    act = ::act,
+                    reminders = reminders,
+                    openApp = openApp,
+                    onCantToday = {
+                        openPromise(model.logId, model.habitId)
+                        onFinished()
+                    },
+                )
                 is PopupModel.Checklist -> ChecklistContent(model, onClose = { act { reminders.close(model.logId) } }, onSave = { h, t ->
                     act { reminders.saveChecklist(model.logId, h, t) }
                 })
                 PopupModel.Test -> {
                     Header("Test popup", onClose = onFinished)
                     Text(
-                        "If you can read this over another app, popups work.",
+                        "If you can read this over another app, popups work. Drag the bar at the top to move it.",
                         modifier = Modifier.padding(end = 12.dp),
                     )
                     Button(onClick = onFinished, modifier = Modifier.padding(top = 12.dp)) { Text("It works") }
                 }
             }
         }
+    }
+}
+
+/** The grab bar at the top of a popup over other apps. Drag it to move the popup; the place is remembered. */
+@Composable
+private fun DragBar(drag: DragHandler) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(end = 12.dp)
+            .height(24.dp)
+            .pointerInput(drag) {
+                detectDragGestures(
+                    onDragEnd = drag.onDragEnd,
+                    onDragCancel = drag.onDragEnd,
+                ) { change, amount ->
+                    change.consume()
+                    drag.onDrag(amount.x, amount.y)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.width(40.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.outline))
     }
 }
 
@@ -104,19 +151,23 @@ private fun ReminderContent(
     act: (suspend () -> Unit) -> Unit,
     reminders: ReminderRepository,
     openApp: () -> Unit,
+    onCantToday: () -> Unit,
 ) {
-    var promising by remember(model.logId) { mutableStateOf(false) }
-    if (promising) {
-        PromiseContent(model, onBack = { promising = false }, onPromise = {
-            act { reminders.skip(model.logId, model.habitId, promised = true) }
-        })
-        return
-    }
-
     Header(popupTitle(model), onClose)
     Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Window ${model.windowStart.format(HHMM)}–${model.windowEnd.format(HHMM)}")
-        if (model.promisedYesterday) {
+        if (model.promiseAt != null) {
+            Text(
+                "You said you would do it at ${model.promiseAt.format(HHMM)} today. Keep your word: " +
+                    "+${ScoringConfig.DEFAULT.promiseKeptBonus} bonus 🤝",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        } else {
+            Text("Window ${model.windowStart.format(HHMM)}–${model.windowEnd.format(HHMM)}")
+        }
+        if (model.streakDays > 0) {
+            Text("🔥 ${model.streakDays}-day streak. Keep it alive today.", style = MaterialTheme.typography.bodyMedium)
+        }
+        if (model.promisedYesterday && model.promiseAt == null) {
             Text("Yesterday you promised yourself today. You've got this 💪", style = MaterialTheme.typography.bodyMedium)
         }
         Button(onClick = { act { reminders.start(model.logId, model.habitId); openApp() } }, modifier = Modifier.fillMaxWidth()) {
@@ -132,34 +183,12 @@ private fun ReminderContent(
                 }
             }
         }
-        TextButton(onClick = { promising = true }) { Text("Can't today") }
+        TextButton(onClick = onCantToday) { Text("Can't today") }
         if (model.tasks.isNotEmpty()) {
             HorizontalDivider()
             Text("Tasks to keep in mind", style = MaterialTheme.typography.titleSmall)
             for (task in model.tasks) Text("• ${task.name} — ${dueText(task)}", style = MaterialTheme.typography.bodyMedium)
         }
-    }
-}
-
-/** "Can't today": no guilt, a realistic goal, a promise. The button unlocks after a few seconds. */
-@Composable
-private fun PromiseContent(model: PopupModel.Reminder, onBack: () -> Unit, onPromise: () -> Unit) {
-    var secondsLeft by remember(model.logId) { mutableIntStateOf(ReminderConfig.DEFAULT.promiseWaitSeconds) }
-    LaunchedEffect(model.logId) {
-        while (secondsLeft > 0) {
-            delay(1_000)
-            secondsLeft--
-        }
-    }
-    Header("That's okay", onClose = onBack)
-    Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Don't feel guilty if it's not possible today.")
-        Text("Setting realistic goals is better than forcing it.")
-        Text("Promise yourself that you will do ${model.habitName} tomorrow.", style = MaterialTheme.typography.titleSmall)
-        Button(onClick = onPromise, enabled = secondsLeft == 0, modifier = Modifier.fillMaxWidth()) {
-            Text(if (secondsLeft > 0) "I promise: tomorrow ($secondsLeft)" else "I promise: tomorrow")
-        }
-        TextButton(onClick = onBack) { Text("Back") }
     }
 }
 

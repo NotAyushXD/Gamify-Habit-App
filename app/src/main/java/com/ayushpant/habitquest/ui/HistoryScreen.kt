@@ -163,7 +163,7 @@ private fun DayCard(
                     is HistoryEntry.HabitDone -> {
                         val s = entry.session
                         val via = if (s.source == SessionSource.CHECKLIST) " · checklist" else ""
-                        val bonus = if (s.bonusPoints > 0) " (incl. +${s.bonusPoints} comeback)" else ""
+                        val bonus = if (s.bonusPoints > 0) " (incl. +${s.bonusPoints} bonus)" else ""
                         EntryRow("✓ ${entry.habitName}", "${timeOf(s).format(HHMM)}$via · +${s.points}$bonus") { onSession(s) }
                     }
                     is HistoryEntry.HabitMissed -> Row(verticalAlignment = Alignment.CenterVertically) {

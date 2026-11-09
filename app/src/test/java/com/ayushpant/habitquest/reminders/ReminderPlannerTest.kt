@@ -129,4 +129,23 @@ class ReminderPlannerTest {
         val shown = listOf(PlanLog(1, null, ReminderKind.CHECKLIST, at(23, 0), ReminderResult.DONE))
         assertTrue(planDay(day, emptyList(), shown, rules).isEmpty())
     }
+
+    @Test
+    fun `a promise reminder comes at the promised time, also on an unplanned day and over the limit`() {
+        val promised = meditate.copy(scheduled = false, promiseAt = t(19, 0))
+        val full = listOf(
+            log(1, ReminderKind.START, ReminderResult.SNOOZED),
+            log(2, ReminderKind.SNOOZE, ReminderResult.SNOOZED),
+            log(3, ReminderKind.LAST_CHANCE, ReminderResult.CLOSED),
+        )
+        val planned = planDay(day, listOf(promised), full, rules.copy(checklistEnabled = false))
+        assertEquals(listOf(ReminderKind.PROMISE to at(19, 0)), planned.map { it.kind to it.at })
+    }
+
+    @Test
+    fun `the promise reminder wins over a window reminder at the same time`() {
+        val h = meditate.copy(promiseAt = t(6, 30))
+        val d = decide(at(6, 31), planDay(day, listOf(h), emptyList(), rules.copy(checklistEnabled = false)), rules)
+        assertEquals(listOf(ReminderKind.PROMISE), d.show.map { it.kind })
+    }
 }

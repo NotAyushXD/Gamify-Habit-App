@@ -132,7 +132,7 @@ data class Settings(
     @ColumnInfo(name = "max_reminders") val maxReminders: Int = 3,
 )
 
-enum class ReminderKind { START, LAST_CHANCE, SNOOZE, CHECKLIST }
+enum class ReminderKind { START, LAST_CHANCE, SNOOZE, CHECKLIST, PROMISE }
 
 enum class ReminderResult {
     /** A snooze waiting for its time. */

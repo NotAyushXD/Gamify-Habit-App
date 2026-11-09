@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.ayushpant.habitquest.balance.Dimension
 import com.ayushpant.habitquest.balance.maskOf
 import com.ayushpant.habitquest.scoring.EVERY_DAY_MASK
+import com.ayushpant.habitquest.scoring.ScoringConfig
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -386,5 +387,58 @@ class HabitRepositoryTest {
         assertEquals(0.5, meters[Dimension.MIND]!!.rate!!, 1e-9)
         assertEquals(1.0, meters[Dimension.SOUL]!!.rate!!, 1e-9)
         assertEquals(0.0, meters[Dimension.BODY]!!.rate!!, 1e-9)
+    }
+
+    // ---- Promises ---------------------------------------------------------------------------------
+
+    @Test
+    fun `misses before today decide whether the oath is needed`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        setTime(monday.plusDays(1), 20, 0)
+        assertEquals(0, repo.priorConsecutiveMisses(id)) // only today missed so far: a tap is enough
+        setTime(monday.plusDays(3), 20, 0)
+        assertEquals(2, repo.priorConsecutiveMisses(id)) // Tue and Wed missed too: oath
+    }
+
+    @Test
+    fun `a kept promise gives the bonus, undoing the session takes it back`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 20, 0)
+        repo.makePromise(id, monday.plusDays(1).atTime(7, 0), OathMethod.TAP, null)
+        assertTrue(db.skips().getForDay(monday).single().promised)
+
+        setTime(monday.plusDays(1), 7, 5); repo.tickHabit(id)
+        val today = habitToday(id)
+        assertEquals(PromiseStatus.KEPT, today.promise!!.status)
+        assertEquals(10 + ScoringConfig.DEFAULT.promiseKeptBonus, today.points)
+
+        repo.removeSession(today.done.single().id)
+        assertEquals(PromiseStatus.OPEN, habitToday(id).promise!!.status)
+    }
+
+    @Test
+    fun `a promise not kept is broken when its day closes, and a late History entry still keeps it`() = runBlocking {
+        val id = newHabit()
+        val tue = monday.plusDays(1)
+        setTime(monday, 20, 0)
+        repo.makePromise(id, tue.atTime(7, 0), OathMethod.TYPED, "I promise I will Meditate tomorrow at 07:00")
+        setTime(monday.plusDays(2), 9, 0); repo.closePendingDays()
+        assertEquals(PromiseStatus.BROKEN, db.promises().getDueOn(tue).single().status)
+
+        repo.addSession(id, tue, LocalTime.of(7, 0), SessionSource.MANUAL)
+        assertEquals(PromiseStatus.KEPT, db.promises().getDueOn(tue).single().status)
+    }
+
+    @Test
+    fun `promising again breaks the earlier open promise`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 20, 0)
+        repo.makePromise(id, monday.plusDays(1).atTime(7, 0), OathMethod.TAP, null)
+        setTime(monday.plusDays(1), 20, 0)
+        repo.makePromise(id, monday.plusDays(2).atTime(7, 0), OathMethod.TYPED, "x")
+        assertEquals(PromiseStatus.BROKEN, db.promises().getDueOn(monday.plusDays(1)).single().status)
+        assertEquals(PromiseStatus.OPEN, db.promises().getDueOn(monday.plusDays(2)).single().status)
+        assertNull(habitToday(id).promise) // today's promise is broken, so no banner
     }
 }

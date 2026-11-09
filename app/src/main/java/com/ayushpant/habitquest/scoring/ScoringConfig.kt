@@ -36,6 +36,9 @@ data class ScoringConfig(
     val freezesPerWeek: Int = 1,
     val comebackBonus: Int = 5,
 
+    // Promise (decision after the spec): doing the habit on the day you promised gives this extra.
+    val promiseKeptBonus: Int = 5,
+
     // 7.4 Daily bonus (habits only; tasks never count toward it)
     val dailyBonus: Int = 10,
 

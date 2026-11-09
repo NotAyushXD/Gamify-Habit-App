@@ -41,6 +41,8 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
     private val queue = ArrayDeque<PopupModel>()
     private val current = mutableStateOf<PopupModel?>(null)
     private var view: ComposeView? = null
+    private var layoutParams: WindowManager.LayoutParams? = null
+    private var savedY: Int? = null
 
     override fun onCreate() {
         savedState.performAttach()
@@ -62,6 +64,7 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
         val ids = intent?.getLongArrayExtra(EXTRA_LOG_IDS) ?: longArrayOf()
         lifecycleScope.launch {
             val reminders = (application as HabitQuestApp).reminders
+            savedY = reminders.popupY()
             for (id in ids) reminders.popupFor(id)?.let { queue.addLast(it) }
             showNext()
         }
@@ -93,10 +96,12 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
                             reminders = reminders,
                             scope = lifecycleScope,
                             openApp = ::openApp,
+                            openPromise = ::openPromise,
                             onFinished = {
                                 current.value = null
                                 showNext()
                             },
+                            drag = DragHandler(onDrag = { _, dy -> moveBy(dy) }, onDragEnd = ::savePosition),
                         )
                     }
                 }
@@ -109,19 +114,45 @@ class PopupService : LifecycleService(), SavedStateRegistryOwner {
             // The rest of the screen keeps working; the popup does not take the keyboard.
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.CENTER }
+        ).apply {
+            // Measured from the top, so the user can drag it up and down. Default: a third down the screen.
+            gravity = Gravity.TOP
+            y = savedY ?: (resources.displayMetrics.heightPixels * 0.3).toInt()
+        }
         try {
             getSystemService(WindowManager::class.java).addView(compose, params)
             view = compose
+            layoutParams = params
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Could not show popup over other apps", e)
             stopSelf()
         }
     }
 
+    private fun moveBy(dy: Float) {
+        val v = view ?: return
+        val params = layoutParams ?: return
+        val maxY = (resources.displayMetrics.heightPixels - v.height).coerceAtLeast(0)
+        params.y = (params.y + dy.toInt()).coerceIn(0, maxY)
+        getSystemService(WindowManager::class.java).updateViewLayout(v, params)
+    }
+
+    /** The next popup opens where the user left this one. */
+    private fun savePosition() {
+        val y = layoutParams?.y ?: return
+        savedY = y
+        lifecycleScope.launch { (application as HabitQuestApp).reminders.savePopupY(y) }
+    }
+
+    /** "Can't today": the promise screen needs the keyboard and the microphone, so it opens as an app screen. */
+    private fun openPromise(logId: Long, habitId: Long) {
+        startActivity(PopupActivity.promiseIntent(this, logId, habitId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     private fun removeView() {
         view?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         view = null
+        layoutParams = null
     }
 
     private fun openApp() {

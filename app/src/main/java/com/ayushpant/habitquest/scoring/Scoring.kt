@@ -95,6 +95,8 @@ fun scoreHabitDay(
     closedStreak: StreakState,
     confirmed: List<SessionInput>,
     cfg: ScoringConfig = ScoringConfig.DEFAULT,
+    /** Added to the first session on top of the comeback bonus, e.g. for a kept promise. */
+    extraBonus: Int = 0,
 ): Map<Long, SessionScore> {
     val ordered = confirmed.sortedWith(compareBy({ it.start }, { it.id }))
     val first = ordered.firstOrNull() ?: return emptyMap()
@@ -104,7 +106,7 @@ fun scoreHabitDay(
         streak = streakMultiplier(closedStreak.currentDays + 1, cfg),
         evidence = evidenceFactor(first.evidenceFound, cfg),
     )
-    val bonus = if (closedStreak.comebackPending) cfg.comebackBonus else 0
+    val bonus = (if (closedStreak.comebackPending) cfg.comebackBonus else 0) + extraBonus
     return ordered.associate { s ->
         s.id to if (s.id == first.id) SessionScore(core + bonus, bonus) else SessionScore(0, 0)
     }

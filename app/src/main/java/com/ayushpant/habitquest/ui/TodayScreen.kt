@@ -52,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.ayushpant.habitquest.data.HabitRepository
 import com.ayushpant.habitquest.data.HabitToday
+import com.ayushpant.habitquest.data.PromiseStatus
 import com.ayushpant.habitquest.data.Session
 import com.ayushpant.habitquest.data.TaskToday
 import com.ayushpant.habitquest.data.TodayData
@@ -287,11 +288,13 @@ private fun HabitTile(
                 Text(window + streak, style = MaterialTheme.typography.bodyMedium)
                 val status = when {
                     firstDone != null -> {
-                        val bonus = if (firstDone.bonusPoints > 0) " (incl. +${firstDone.bonusPoints} comeback)" else ""
-                        "Done at ${timeOf(firstDone).format(HHMM)}  ·  +${h.points}$bonus"
+                        val kept = if (h.promise?.status == PromiseStatus.KEPT) "  ·  🤝 promise kept" else ""
+                        val bonus = if (firstDone.bonusPoints > 0) " (incl. +${firstDone.bonusPoints} bonus)" else ""
+                        "Done at ${timeOf(firstDone).format(HHMM)}  ·  +${h.points}$bonus$kept"
                     }
                     h.inProgress != null -> "In progress since ${timeOf(h.inProgress).format(HHMM)}"
-                    h.skip?.promised == true -> "Skipped today · you promised tomorrow"
+                    h.promise != null -> "🤝 You promised: today at ${java.time.Instant.ofEpochMilli(h.promise.dueAt).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(HHMM)}"
+                    h.skip?.promised == true -> "Skipped today · promise made"
                     h.skip != null -> "Skipped today"
                     !h.scheduledToday -> "Not scheduled today"
                     else -> "Not done — tap to start"

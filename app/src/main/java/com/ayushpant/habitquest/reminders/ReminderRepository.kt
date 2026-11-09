@@ -4,6 +4,9 @@ import androidx.room.withTransaction
 import com.ayushpant.habitquest.data.AppDatabase
 import com.ayushpant.habitquest.data.AppState
 import com.ayushpant.habitquest.data.HabitRepository
+import com.ayushpant.habitquest.data.OathMethod
+import com.ayushpant.habitquest.data.PromiseStatus
+import com.ayushpant.habitquest.promise.oathRequired
 import com.ayushpant.habitquest.data.ReminderKind
 import com.ayushpant.habitquest.data.ReminderLog
 import com.ayushpant.habitquest.data.ReminderResult
@@ -22,6 +25,16 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+
+/** For the promise screen. [logId] < 0 when it was opened from the Today screen, not a reminder. */
+data class PromiseContext(
+    val logId: Long,
+    val habitId: Long,
+    val habitName: String,
+    val suggestedTime: LocalTime,
+    val priorMisses: Int,
+    val oathRequired: Boolean,
+)
 
 /** A line for an open task on a popup. */
 data class TaskLine(val id: Long, val name: String, val dueDate: LocalDate, val daysLate: Long)
@@ -46,6 +59,10 @@ sealed interface PopupModel {
         val tasks: List<TaskLine>,
         /** False when another snooze would go over the daily reminder limit. */
         val canSnooze: Boolean = true,
+        /** The promised time, on a PROMISE reminder. */
+        val promiseAt: LocalTime? = null,
+        /** The current streak (after the last closed day), shown on the popup: "don't lose 🔥 8". */
+        val streakDays: Int = 0,
     ) : PopupModel
 
     data class Checklist(
@@ -89,6 +106,11 @@ class ReminderRepository(
 
     private fun Settings.toRules() = ReminderRules(quietEnabled, quietStart, quietEnd, checklistEnabled, maxReminders, config)
 
+    /** Where the user last dragged the popup (pixels from the top), or null for the default place. */
+    suspend fun popupY(): Int? = db.appState().get(KEY_POPUP_Y)?.toIntOrNull()
+
+    suspend fun savePopupY(y: Int) = db.appState().put(AppState(KEY_POPUP_Y, y.toString()))
+
     // ---- Planning ------------------------------------------------------------------------------
 
     private suspend fun planToday(): Pair<List<Planned>, ReminderRules> {
@@ -96,8 +118,12 @@ class ReminderRepository(
         val rules = settings().toRules()
         val skipped = db.skips().getForDay(day).map { it.habitId }.toSet()
         val doneIds = db.sessions().getForDay(day).filter { it.status == SessionStatus.CONFIRMED }.map { it.habitId }.toSet()
+        val promises = db.promises().getDueOn(day).filter { it.status == PromiseStatus.OPEN }.associateBy { it.habitId }
         val planHabits = db.habits().getActive().map {
-            PlanHabit(it.id, it.windowStart, it.windowEnd, isScheduledOn(it.daysMask, day), it.id in doneIds, it.id in skipped)
+            PlanHabit(
+                it.id, it.windowStart, it.windowEnd, isScheduledOn(it.daysMask, day), it.id in doneIds, it.id in skipped,
+                promiseAt = promises[it.id]?.let { p -> toLocal(p.dueAt).toLocalTime() },
+            )
         }
         val logs = db.reminders().getForDay(day).map { PlanLog(it.id, it.habitId, it.kind, toLocal(it.dueAt), it.result) }
         return planDay(day, planHabits, logs, rules) to rules
@@ -177,6 +203,8 @@ class ReminderRepository(
             promisedYesterday = promised,
             tasks = if (withTasks) db.tasks().getOpen().take(config.tasksOnFirstPopup).map { it.toLine(log.day) } else emptyList(),
             canSnooze = canSnooze,
+            promiseAt = if (log.kind == ReminderKind.PROMISE) toLocal(log.dueAt).toLocalTime() else null,
+            streakDays = db.streaks().get(habit.id)?.currentDays ?: 0,
         )
     }
 
@@ -229,6 +257,19 @@ class ReminderRepository(
         resolve(logId, ReminderResult.SNOOZED)
     }
 
+    /** What the promise screen needs: the habit, a suggested time, and whether the oath is needed. */
+    suspend fun promiseContext(logId: Long, habitId: Long): PromiseContext? {
+        val habit = db.habits().get(habitId) ?: return null
+        val misses = habits.priorConsecutiveMisses(habitId)
+        return PromiseContext(logId, habit.id, habit.name, habit.windowStart, misses, oathRequired(misses))
+    }
+
+    /** The promise is made: today is skipped and the habit is promised for [dueAt]. */
+    suspend fun promise(logId: Long, habitId: Long, dueAt: LocalDateTime, method: OathMethod, oathText: String?) {
+        habits.makePromise(habitId, dueAt, method, oathText)
+        if (logId >= 0) resolve(logId, ReminderResult.PROMISED) else onChange()
+    }
+
     /** "Skip today", or "I promise: tomorrow" ([promised] = true). No more reminders today. */
     suspend fun skip(logId: Long, habitId: Long, promised: Boolean) {
         habits.skipToday(habitId, promised)
@@ -256,5 +297,6 @@ class ReminderRepository(
 
     private companion object {
         const val KEY_TASKS_POPUP = "tasks_popup."
+        const val KEY_POPUP_Y = "popup_y"
     }
 }

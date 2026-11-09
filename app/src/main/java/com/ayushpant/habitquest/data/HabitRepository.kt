@@ -28,6 +28,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 const val LOG_TAG = "HabitQuest"
@@ -45,6 +46,8 @@ data class HabitToday(
     val freezeUsed: Boolean = false,
     /** Set when the user chose "Skip today" or "Can't today". */
     val skip: HabitSkip? = null,
+    /** A promise for today (open or kept). */
+    val promise: Promise? = null,
 ) {
     val isDone get() = done.isNotEmpty()
     val points get() = done.sumOf { it.points }
@@ -106,6 +109,8 @@ data class RangeData(
     val skips: List<HabitSkip>,
     val openTasks: List<Task> = emptyList(),
     val streaks: List<Streak> = emptyList(),
+    /** Promises due in the range. */
+    val promises: List<Promise> = emptyList(),
 )
 
 /**
@@ -169,6 +174,9 @@ class HabitRepository(
     }.combine(db.skips().observeBetween(day, day)) { data, skips ->
         val byHabit = skips.associateBy { it.habitId }
         data.copy(habits = data.habits.map { it.copy(skip = byHabit[it.habit.id]) })
+    }.combine(db.promises().observeDueOn(day)) { data, promises ->
+        val byHabit = promises.filter { it.status != PromiseStatus.BROKEN }.associateBy { it.habitId }
+        data.copy(habits = data.habits.map { it.copy(promise = byHabit[it.habit.id]) })
     }
 
     suspend fun getHabit(id: Long): Habit? = db.habits().get(id)
@@ -317,6 +325,46 @@ class HabitRepository(
         onChange()
     }
 
+    /**
+     * Planned days this habit was missed in a row before today (unplanned days are passed over).
+     * Decides whether a promise needs the oath.
+     */
+    suspend fun priorConsecutiveMisses(habitId: Long): Int {
+        val habit = db.habits().get(habitId) ?: return 0
+        var misses = 0
+        var day = today().minusDays(1)
+        while (day > habit.createdDate) {
+            if (isScheduledOn(habit.daysMask, day)) {
+                if (db.sessions().getConfirmed(habitId, day).isNotEmpty()) break
+                misses++
+            }
+            day = day.minusDays(1)
+        }
+        return misses
+    }
+
+    /**
+     * "Can't today, I promise": today is skipped (no more reminders today), and the habit is promised
+     * for [dueAt]. An earlier promise that is still open (e.g. for today) is broken by this.
+     */
+    suspend fun makePromise(habitId: Long, dueAt: LocalDateTime, method: OathMethod, oathText: String?) {
+        db.withTransaction {
+            for (old in db.promises().getDueOn(today()) + listOfNotNull(db.promises().getOpen(habitId))) {
+                if (old.habitId == habitId && old.status == PromiseStatus.OPEN) db.promises().update(old.copy(status = PromiseStatus.BROKEN))
+            }
+            db.promises().insert(
+                Promise(
+                    habitId = habitId, madeOn = today(), dueDay = dueAt.toLocalDate(),
+                    dueAt = dueAt.atZone(clock.zone).toInstant().toEpochMilli(), oathMethod = method, oathText = oathText,
+                )
+            )
+            db.skips().put(HabitSkip(habitId, today(), promised = true, createdAt = clock.millis()))
+        }
+        onChange()
+    }
+
+    suspend fun openPromise(habitId: Long): Promise? = db.promises().getOpen(habitId)
+
     suspend fun undoSkip(habitId: Long, day: LocalDate) {
         db.skips().delete(habitId, day)
         onChange()
@@ -355,12 +403,25 @@ class HabitRepository(
 
     /** Scores one habit's confirmed sessions on [day], given the streak after the day before. */
     private suspend fun rescoreHabitDay(habit: Habit, day: LocalDate, closedStreak: StreakState) {
+        val confirmed = db.sessions().getConfirmed(habit.id, day)
+        // A promise for this day is kept as soon as the habit is done, also when the session is added
+        // later in History. Undone again: open while the day lasts, broken once it is over.
+        val promise = db.promises().getDueOn(day).filter { it.habitId == habit.id }.maxByOrNull { it.id }
+        if (promise != null) {
+            val status = when {
+                confirmed.isNotEmpty() -> PromiseStatus.KEPT
+                promise.status != PromiseStatus.KEPT -> promise.status // open stays open, broken stays broken
+                day < today() -> PromiseStatus.BROKEN
+                else -> PromiseStatus.OPEN
+            }
+            if (status != promise.status) db.promises().update(promise.copy(status = status))
+        }
         val scores = scoreHabitDay(
             habit = HabitRules(cfg.basePoints, habit.windowStart, habit.windowEnd),
             closedStreak = closedStreak,
-            confirmed = db.sessions().getConfirmed(habit.id, day)
-                .map { SessionInput(it.id, localTimeOf(it.startTime), it.evidenceFound) },
+            confirmed = confirmed.map { SessionInput(it.id, localTimeOf(it.startTime), it.evidenceFound) },
             cfg = cfg,
+            extraBonus = if (promise != null && confirmed.isNotEmpty()) cfg.promiseKeptBonus else 0,
         )
         for ((id, score) in scores) db.sessions().setPoints(id, score.points, score.bonusPoints)
     }
@@ -415,6 +476,7 @@ class HabitRepository(
         RangeData(from, to, habits, sessions, bonuses, tasks, skips)
     }.combine(db.tasks().observeOpen()) { data, open -> data.copy(openTasks = open) }
         .combine(db.streaks().observeAll()) { data, streaks -> data.copy(streaks = streaks) }
+        .combine(db.promises().observeDueBetween(from, to)) { data, promises -> data.copy(promises = promises) }
 
     suspend fun lastClosedDay(): LocalDate? = db.appState().get(KEY_LAST_CLOSED)?.let(LocalDate::parse)
 
@@ -459,6 +521,9 @@ class HabitRepository(
     private suspend fun closeOneDay(day: LocalDate) {
         logSignal(SignalKind.TASK, "day_close $day")
         rescoreDay(day) // backstop: makes sure the points and the daily bonus are final
+        for (p in db.promises().getDueOn(day).filter { it.status == PromiseStatus.OPEN }) {
+            db.promises().update(p.copy(status = PromiseStatus.BROKEN))
+        }
         for (habit in db.habits().getActive()) {
             if (habit.createdDate > day) continue
             val outcome = dayOutcome(

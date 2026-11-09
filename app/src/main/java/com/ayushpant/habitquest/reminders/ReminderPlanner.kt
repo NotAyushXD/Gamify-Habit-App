@@ -29,6 +29,8 @@ data class PlanHabit(
     val scheduled: Boolean,
     val done: Boolean,
     val skipped: Boolean,
+    /** The time the user promised to do it today, if there is an open promise. */
+    val promiseAt: LocalTime? = null,
 )
 
 /** A reminder_log row for today. */
@@ -86,8 +88,14 @@ fun planDay(
     val planned = mutableListOf<Planned>()
 
     for (h in habits) {
-        if (!h.scheduled || h.done || h.skipped) continue
+        if (h.done) continue
         val mine = logs.filter { it.habitId == h.id }
+        // A promise reminder comes at the promised time, also on an unplanned day. It is not part of
+        // the daily limit: the user asked for it.
+        if (h.promiseAt != null && !h.skipped && mine.none { it.kind == ReminderKind.PROMISE }) {
+            planned += Planned(h.id, ReminderKind.PROMISE, day.atTime(h.promiseAt), endOfDay)
+        }
+        if (!h.scheduled || h.skipped) continue
         val windowEnd = day.atTime(h.windowEnd)
         // Spec 6.2: max 3 reminders a day (start + snoozes + last chance together).
         val left = startAndSnoozeLeft(h.windowStart, h.windowEnd, mine, rules)
@@ -124,7 +132,7 @@ fun decide(now: LocalDateTime, planned: List<Planned>, rules: ReminderRules): De
     for (p in due) {
         if (now > p.expiresAt || inQuietHours(now.toLocalTime(), rules)) suppress += p else show += p
     }
-    val urgency = listOf(ReminderKind.LAST_CHANCE, ReminderKind.SNOOZE, ReminderKind.START)
+    val urgency = listOf(ReminderKind.PROMISE, ReminderKind.LAST_CHANCE, ReminderKind.SNOOZE, ReminderKind.START)
     val onePerHabit = show.filter { it.habitId != null }
         .groupBy { it.habitId }
         .flatMap { (_, list) ->
