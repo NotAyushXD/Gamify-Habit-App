@@ -40,7 +40,11 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ayushpant.habitquest.BuildConfig
+import com.ayushpant.habitquest.data.ReminderKind
+import com.ayushpant.habitquest.data.ReminderResult
 import com.ayushpant.habitquest.data.Settings
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import com.ayushpant.habitquest.reminders.PopupPresenter
 import com.ayushpant.habitquest.reminders.ReminderRepository
 import com.ayushpant.habitquest.reminders.ReminderScheduler
@@ -58,12 +62,18 @@ fun SettingsScreen(reminders: ReminderRepository) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by reminders.observeSettings().collectAsStateWithLifecycle(initialValue = null)
+    val log by reminders.observeRecentLog().collectAsStateWithLifecycle(initialValue = emptyList())
+    var nextAlarm by remember { mutableStateOf<String?>(null) }
 
     // Permission status can change in the phone's settings, so read it again each time we come back.
     var refresh by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) {
         refresh++
         onPauseOrDispose { }
+    }
+    LaunchedEffect(refresh, settings) {
+        val at = java.time.Instant.ofEpochMilli(reminders.nextAlarmMillis()).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+        nextAlarm = at.format(DateTimeFormatter.ofPattern("EEE d MMM, HH:mm"))
     }
     val overlay = remember(refresh) { ReminderScheduler.canDrawOverlays(context) }
     val notify = remember(refresh) { ReminderScheduler.canNotify(context) }
@@ -153,9 +163,46 @@ fun SettingsScreen(reminders: ReminderRepository) {
                 Text("Window start, a snooze, and \"last chance\" 15 min before the end each count as one.", style = MaterialTheme.typography.bodySmall)
             }
 
+            Section("Reminder check") {
+                Text("Next reminder: ${nextAlarm ?: "…"}", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "If a reminder did not come, this list shows what happened to it. " +
+                        "\"Not shown\" means quiet hours, the daily limit, or the phone was off past its window.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (log.isEmpty()) Text("No reminders yet.", style = MaterialTheme.typography.bodyMedium)
+                for (line in log) {
+                    Row {
+                        Text(line.dueAt.format(DateTimeFormatter.ofPattern("EEE HH:mm")), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.3f))
+                        Text("${line.what} · ${kindText(line.kind)}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.45f))
+                        Text(resultText(line.result), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.25f))
+                    }
+                }
+            }
+
             Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
         }
     }
+}
+
+private fun kindText(kind: ReminderKind) = when (kind) {
+    ReminderKind.START -> "start"
+    ReminderKind.LAST_CHANCE -> "last chance"
+    ReminderKind.SNOOZE -> "snooze"
+    ReminderKind.CHECKLIST -> "11 PM"
+    ReminderKind.PROMISE -> "promise"
+}
+
+private fun resultText(result: ReminderResult) = when (result) {
+    ReminderResult.PENDING -> "waiting"
+    ReminderResult.SHOWN -> "shown"
+    ReminderResult.STARTED -> "started ✓"
+    ReminderResult.DONE -> "done ✓"
+    ReminderResult.SNOOZED -> "snoozed"
+    ReminderResult.SKIPPED -> "skipped"
+    ReminderResult.PROMISED -> "promised 🤝"
+    ReminderResult.CLOSED -> "closed"
+    ReminderResult.SUPPRESSED -> "not shown"
 }
 
 @Composable

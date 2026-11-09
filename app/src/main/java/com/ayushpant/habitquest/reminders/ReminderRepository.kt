@@ -19,6 +19,7 @@ import com.ayushpant.habitquest.data.Task
 import com.ayushpant.habitquest.scoring.daysLate
 import com.ayushpant.habitquest.scoring.isScheduledOn
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import java.time.Clock
 import java.time.Instant
@@ -105,6 +106,16 @@ class ReminderRepository(
     }
 
     private fun Settings.toRules() = ReminderRules(quietEnabled, quietStart, quietEnd, checklistEnabled, maxReminders, config)
+
+    /** One line of the reminder check in Settings. */
+    data class LogLine(val dueAt: LocalDateTime, val what: String, val kind: ReminderKind, val result: ReminderResult)
+
+    /** The latest reminders, newest first, for the reminder check in Settings. */
+    fun observeRecentLog(limit: Int = 20): Flow<List<LogLine>> =
+        combine(db.reminders().observeRecent(limit), db.habits().observeAll()) { logs, all ->
+            val names = all.associate { it.id to it.name }
+            logs.map { LogLine(toLocal(it.dueAt), it.habitId?.let { id -> names[id] } ?: "Checklist", it.kind, it.result) }
+        }
 
     /** Where the user last dragged the popup (pixels from the top), or null for the default place. */
     suspend fun popupY(): Int? = db.appState().get(KEY_POPUP_Y)?.toIntOrNull()

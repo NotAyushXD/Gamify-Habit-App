@@ -130,6 +130,9 @@ interface ReminderLogDao {
     @Query("SELECT * FROM reminder_log WHERE id = :id")
     suspend fun get(id: Long): ReminderLog?
 
+    @Query("SELECT * FROM reminder_log ORDER BY due_at DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<ReminderLog>>
+
     @Insert
     suspend fun insert(row: ReminderLog): Long
 
