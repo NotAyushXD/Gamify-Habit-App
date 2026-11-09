@@ -116,6 +116,16 @@ class SummaryRenderTest {
     }
 
     @Test
+    fun renderEditor() {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries().build()
+        compose.setContent { HabitQuestTheme { EditorScreen(HabitRepository(db), ItemKind.HABIT, 0L, onDone = {}) } }
+        compose.mainClock.advanceTimeBy(1_000)
+        save(File("build/render").apply { mkdirs() }, "editor-new.png")
+        db.close()
+    }
+
+    @Test
     fun renderPromise() {
         val out = File("build/render").apply { mkdirs() }
         val ctx = PromiseContext(logId = 1, habitId = 1, habitName = "Meditate", suggestedTime = LocalTime.of(7, 0), priorMisses = 2, oathRequired = true)
