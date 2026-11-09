@@ -244,6 +244,7 @@ private fun SummaryCard(today: TodayData) {
                 "Do every habit scheduled today for +${ScoringConfig.DEFAULT.dailyBonus}"
             }
             Text(bonusText, style = MaterialTheme.typography.bodyMedium)
+            if (today.balance.any { it.planned > 0 }) BalanceRow(today.balance, Modifier.padding(top = 12.dp))
         }
     }
 }

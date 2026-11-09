@@ -39,6 +39,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.ayushpant.habitquest.balance.Dimension
+import com.ayushpant.habitquest.balance.dimensionsOf
+import com.ayushpant.habitquest.balance.maskOf
+import com.ayushpant.habitquest.balance.suggestDimensions
 import com.ayushpant.habitquest.data.CreatureLine
 import com.ayushpant.habitquest.data.Habit
 import com.ayushpant.habitquest.data.HabitRepository
@@ -79,7 +83,10 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     var windowStart by remember { mutableStateOf(LocalTime.of(7, 0)) }
     var windowEnd by remember { mutableStateOf(LocalTime.of(8, 0)) }
     var daysMask by remember { mutableStateOf(EVERY_DAY_MASK) }
-    var creatureLine by remember { mutableStateOf(CreatureLine.CALM) }
+
+    // Mind / Body / Soul: suggested from the name until the user taps a chip.
+    var dims by remember { mutableStateOf(emptySet<Dimension>()) }
+    var dimsTouched by remember { mutableStateOf(false) }
 
     // Task fields
     var loadedTask by remember { mutableStateOf<Task?>(null) }
@@ -94,12 +101,15 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 windowStart = h.windowStart
                 windowEnd = h.windowEnd
                 daysMask = h.daysMask
-                creatureLine = h.creatureLine
+                dims = dimensionsOf(h.mbsMask)
+                dimsTouched = h.mbsMask != 0
             }
             ItemKind.TASK -> repo.getTask(id)?.let { t ->
                 loadedTask = t
                 name = t.name
                 dueDate = t.dueDate
+                dims = dimensionsOf(t.mbsMask)
+                dimsTouched = t.mbsMask != 0
             }
         }
     }
@@ -162,7 +172,11 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
             }
 
             OutlinedTextField(
-                value = name, onValueChange = { name = it },
+                value = name,
+                onValueChange = {
+                    name = it
+                    if (!dimsTouched) dims = suggestDimensions(it)
+                },
                 label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
 
@@ -216,21 +230,31 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 style = MaterialTheme.typography.bodySmall,
             )
 
-            if (kind == ItemKind.HABIT) {
-                Column {
-                    Text("Creature", style = MaterialTheme.typography.titleSmall)
-                    Text("Calm = mind, Strong = body, Wise = learning. Hatches in a later version.", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                        CreatureLine.entries.forEach { line ->
-                            FilterChip(
-                                selected = creatureLine == line,
-                                onClick = { creatureLine = line },
-                                label = { Text(line.label()) },
-                            )
-                        }
+            Column {
+                Text("Feeds your", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    when {
+                        dims.isEmpty() -> "Pick what this is good for. Its points fill these meters."
+                        dimsTouched -> "Its points are shared between these meters."
+                        else -> "Suggested from the name. Tap to change."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    Dimension.entries.forEach { d ->
+                        FilterChip(
+                            selected = d in dims,
+                            onClick = {
+                                dimsTouched = true
+                                dims = if (d in dims) dims - d else dims + d
+                            },
+                            label = { Text("${d.emoji} ${d.label}") },
+                        )
                     }
                 }
+            }
 
+            if (kind == ItemKind.HABIT) {
                 Text(
                     "Type: manual. App and zone habits come in later steps.",
                     style = MaterialTheme.typography.bodySmall,
@@ -246,12 +270,12 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                             ItemKind.HABIT -> {
                                 val base = loadedHabit ?: Habit(
                                     name = "", windowStart = windowStart, windowEnd = windowEnd, basePoints = cfg.basePoints,
-                                    creatureLine = creatureLine, daysMask = daysMask, createdDate = LocalDate.now(),
+                                    creatureLine = CreatureLine.CALM, daysMask = daysMask, createdDate = LocalDate.now(), // the repository sets the creature line
                                 )
                                 repo.saveHabit(
                                     base.copy(
                                         name = name.trim(), windowStart = windowStart, windowEnd = windowEnd,
-                                        daysMask = daysMask, creatureLine = creatureLine,
+                                        daysMask = daysMask, mbsMask = maskOf(dims),
                                     )
                                 )
                             }
@@ -259,7 +283,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                                 val base = loadedTask ?: Task(
                                     name = "", dueDate = dueDate, basePoints = cfg.basePoints, createdDate = LocalDate.now(),
                                 )
-                                repo.saveTask(base.copy(name = name.trim(), dueDate = dueDate))
+                                repo.saveTask(base.copy(name = name.trim(), dueDate = dueDate, mbsMask = maskOf(dims)))
                             }
                         }
                         onDone()
@@ -302,8 +326,3 @@ private fun taskScoringHelp(cfg: ScoringConfig): String {
     return "By the due date: ×${cfg.taskOnTime} points. Late: $late."
 }
 
-private fun CreatureLine.label() = when (this) {
-    CreatureLine.CALM -> "Calm"
-    CreatureLine.STRONG -> "Strong"
-    CreatureLine.WISE -> "Wise"
-}

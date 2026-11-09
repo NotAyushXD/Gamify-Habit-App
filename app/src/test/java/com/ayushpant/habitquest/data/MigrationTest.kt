@@ -95,4 +95,27 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 3 to 4 keeps habits and adds Mind Body Soul and promises`() = runBlocking {
+        createDatabaseAtVersion(3).apply {
+            execSQL(
+                "INSERT INTO habit (id, name, type, window_start, window_end, base_points, creature_line, days_mask, created_date, active) " +
+                    "VALUES (1, 'Gym', 'MANUAL', '18:00', '19:00', 15, 'STRONG', 127, '2026-11-04', 1)"
+            )
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            val h = db.habits().get(1)!!
+            assertEquals("Gym", h.name)
+            assertEquals(0, h.mbsMask) // filled in later from the name, by the repository
+            db.promises().insert(
+                Promise(habitId = 1, madeOn = LocalDate.of(2026, 11, 8), dueDay = LocalDate.of(2026, 11, 9), dueAt = 0, oathMethod = OathMethod.TAP)
+            )
+            assertEquals(1, db.promises().getDueOn(LocalDate.of(2026, 11, 9)).size)
+        } finally {
+            db.close()
+        }
+    }
 }

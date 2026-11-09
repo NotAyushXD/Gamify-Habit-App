@@ -146,6 +146,27 @@ interface HabitSkipDao {
 }
 
 @Dao
+interface PromiseDao {
+    @Query("SELECT * FROM promise WHERE habit_id = :habitId AND status = 'OPEN' ORDER BY due_at LIMIT 1")
+    suspend fun getOpen(habitId: Long): Promise?
+
+    @Query("SELECT * FROM promise WHERE due_day = :day")
+    suspend fun getDueOn(day: LocalDate): List<Promise>
+
+    @Query("SELECT * FROM promise WHERE due_day = :day")
+    fun observeDueOn(day: LocalDate): Flow<List<Promise>>
+
+    @Query("SELECT * FROM promise WHERE due_day BETWEEN :from AND :to")
+    fun observeDueBetween(from: LocalDate, to: LocalDate): Flow<List<Promise>>
+
+    @Insert
+    suspend fun insert(promise: Promise): Long
+
+    @Update
+    suspend fun update(promise: Promise)
+}
+
+@Dao
 interface StreakDao {
     @Query("SELECT * FROM streak")
     fun observeAll(): Flow<List<Streak>>
@@ -188,6 +209,9 @@ interface AppStateDao {
 
     @Upsert
     suspend fun put(row: AppState)
+
+    @Query("DELETE FROM app_state WHERE `key` = :key")
+    suspend fun delete(key: String)
 }
 
 /** Tells Room how to store java.time types. Dates and times are stored as ISO text, e.g. "2026-11-04". */
@@ -199,13 +223,13 @@ class Converters {
 }
 
 @Database(
-    version = 3,
+    version = 4,
     entities = [
         Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
-        Settings::class, ReminderLog::class, HabitSkip::class,
+        Settings::class, ReminderLog::class, HabitSkip::class, Promise::class,
     ],
     // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -220,6 +244,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun settings(): SettingsDao
     abstract fun reminders(): ReminderLogDao
     abstract fun skips(): HabitSkipDao
+    abstract fun promises(): PromiseDao
 
     companion object {
         fun create(context: Context): AppDatabase =

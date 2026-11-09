@@ -1,6 +1,7 @@
 package com.ayushpant.habitquest.ui
 
 import android.graphics.Bitmap
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -11,6 +12,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.ayushpant.habitquest.balance.maskOf
+import com.ayushpant.habitquest.balance.suggestDimensions
 import com.ayushpant.habitquest.data.AppDatabase
 import com.ayushpant.habitquest.data.CreatureLine
 import com.ayushpant.habitquest.data.Habit
@@ -59,7 +62,7 @@ class SummaryRenderTest {
         runBlocking {
             val names = listOf("Meditate", "Gym", "Read")
             val ids = names.map {
-                repo.saveHabit(Habit(name = it, windowStart = LocalTime.of(7, 0), windowEnd = LocalTime.of(8, 0), basePoints = 10, creatureLine = CreatureLine.CALM, daysMask = EVERY_DAY_MASK, createdDate = start))
+                repo.saveHabit(Habit(name = it, windowStart = LocalTime.of(7, 0), windowEnd = LocalTime.of(8, 0), basePoints = 10, creatureLine = CreatureLine.CALM, daysMask = EVERY_DAY_MASK, createdDate = start, mbsMask = maskOf(suggestDimensions(it))))
             }
             val t1 = repo.saveTask(Task(name = "Passport", dueDate = start.plusDays(9), basePoints = 10, createdDate = start))
             val t2 = repo.saveTask(Task(name = "Bank", dueDate = start.plusDays(8), basePoints = 10, createdDate = start))
@@ -75,7 +78,14 @@ class SummaryRenderTest {
             }
         }
         val out = File(System.getProperty("renderDir") ?: "build/render").apply { mkdirs() }
-        compose.setContent { HabitQuestTheme { SummaryScreen(SummaryViewModel(repo)) } }
+        val today = mutableStateOf(false)
+        val summaryVm = SummaryViewModel(repo)
+        val todayVm = TodayViewModel(repo)
+        compose.setContent {
+            HabitQuestTheme {
+                if (today.value) TodayScreen(todayVm, onAdd = {}, onEditHabit = {}, onEditTask = {}) else SummaryScreen(summaryVm)
+            }
+        }
         compose.waitForIdle()
         compose.mainClock.advanceTimeBy(2_000)
         save(out, "summary-week-overview.png")
@@ -88,6 +98,9 @@ class SummaryRenderTest {
         compose.onNodeWithText("Overview").performClick()
         compose.mainClock.advanceTimeBy(2_000)
         save(out, "summary-month-overview.png")
+        today.value = true
+        compose.mainClock.advanceTimeBy(2_000)
+        save(out, "today.png")
         db.close()
     }
 

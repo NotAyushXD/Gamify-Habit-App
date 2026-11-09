@@ -2,6 +2,8 @@ package com.ayushpant.habitquest.data
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.ayushpant.habitquest.balance.Dimension
+import com.ayushpant.habitquest.balance.maskOf
 import com.ayushpant.habitquest.scoring.EVERY_DAY_MASK
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -342,5 +344,47 @@ class HabitRepositoryTest {
         db.appState().put(AppState("streak_rules_version", "1"))
         repo.closePendingDays()
         assertEquals(0, db.streaks().get(id)!!.currentDays)
+    }
+
+    // ---- Mind / Body / Soul ------------------------------------------------------------------------
+
+    @Test
+    fun `old habits get dimensions from their name once, and the creature follows`() = runBlocking {
+        val id = newHabit("Gym")
+        db.habits().update(db.habits().get(id)!!.copy(mbsMask = 0)) // as on a phone before v4
+        db.appState().delete("mbs_backfill")
+        repo.closePendingDays()
+        val h = db.habits().get(id)!!
+        assertEquals(maskOf(setOf(Dimension.BODY, Dimension.MIND)), h.mbsMask)
+        assertEquals(CreatureLine.STRONG, h.creatureLine)
+    }
+
+    @Test
+    fun `points are fixed at 10 whatever the habit says`() = runBlocking {
+        val id = repo.saveHabit(
+            Habit(name = "Read", windowStart = LocalTime.of(6, 30), windowEnd = LocalTime.of(7, 30), basePoints = 20,
+                creatureLine = CreatureLine.WISE, daysMask = EVERY_DAY_MASK, createdDate = monday)
+        )
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        assertEquals(10, habitToday(id).points)
+    }
+
+    @Test
+    fun `today's meters - meditation feeds mind and soul, gym not done yet`() = runBlocking {
+        val meditate = repo.saveHabit(
+            Habit(name = "Meditate", windowStart = LocalTime.of(6, 30), windowEnd = LocalTime.of(7, 30), basePoints = 10,
+                creatureLine = CreatureLine.CALM, daysMask = EVERY_DAY_MASK, createdDate = monday,
+                mbsMask = maskOf(setOf(Dimension.MIND, Dimension.SOUL)))
+        )
+        repo.saveHabit(
+            Habit(name = "Gym", windowStart = LocalTime.of(18, 0), windowEnd = LocalTime.of(19, 0), basePoints = 10,
+                creatureLine = CreatureLine.STRONG, daysMask = EVERY_DAY_MASK, createdDate = monday,
+                mbsMask = maskOf(setOf(Dimension.BODY, Dimension.MIND)))
+        )
+        setTime(monday, 7, 0); repo.tickHabit(meditate)
+        val meters = today().balance.associateBy { it.dimension }
+        assertEquals(0.5, meters[Dimension.MIND]!!.rate!!, 1e-9)
+        assertEquals(1.0, meters[Dimension.SOUL]!!.rate!!, 1e-9)
+        assertEquals(0.0, meters[Dimension.BODY]!!.rate!!, 1e-9)
     }
 }

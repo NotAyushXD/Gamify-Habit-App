@@ -170,6 +170,7 @@ fun SummaryScreen(vm: SummaryViewModel) {
             }
             if (view == 0) {
                 item { HeroCard(s, whenText(period, isCurrent)) }
+                if (s.balance.any { it.planned > 0 }) item { BalanceCard(s) }
                 if (period != Period.DAY) item { CategoryCalendarCard(s, period, vm::openDay) }
                 val lines = compare(s, st.previous, thanText(period, isCurrent))
                 if (lines.isNotEmpty()) item { ComparisonCard(lines) }
@@ -292,6 +293,37 @@ private fun HeroCard(s: Summary, whenText: String) {
                 LegendRow(HABITS_COLOR, "Habits", percent(s.habitRate), "${s.done} of ${s.scheduled} planned habit-days")
                 LegendRow(TASKS_COLOR, "Tasks on time", percent(s.taskRate), "${s.tasks.dueInRangeOnTime} of ${s.tasks.dueInRange} tasks due")
                 LegendRow(PERFECT_COLOR, "Perfect days", percent(s.perfectRate), "${s.perfectDays} of ${s.plannedDays} days with every habit done")
+            }
+        }
+    }
+}
+
+/** Mind / Body / Soul for the period: one ring each, with the share done and the points. */
+@Composable
+private fun BalanceCard(s: Summary) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Mind · Body · Soul", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+                for (score in s.balance) {
+                    val d = score.dimension
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        StackedRings(rings = listOf(Ring(score.rate, d.color())), size = 84.dp, hole = 28.dp) {
+                            Text(d.emoji, fontSize = 22.sp)
+                        }
+                        Text(d.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))
+                        Text(score.percentText(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = d.color())
+                        Text("+${score.points} pts", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            val weakest = s.balance.filter { it.rate != null }.minByOrNull { it.rate!! }
+            val strongest = s.balance.filter { it.rate != null }.maxByOrNull { it.rate!! }
+            if (weakest != null && strongest != null && weakest != strongest) {
+                Text(
+                    "Your ${strongest.dimension.label.lowercase()} is thriving. A little more for your ${weakest.dimension.label.lowercase()} would balance you out.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
     }

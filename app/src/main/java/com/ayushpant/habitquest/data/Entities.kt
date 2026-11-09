@@ -35,6 +35,8 @@ data class Habit(
     @ColumnInfo(name = "days_mask") val daysMask: Int,
     @ColumnInfo(name = "created_date") val createdDate: LocalDate,
     val active: Boolean = true,
+    /** Mind = 1, Body = 2, Soul = 4 (see balance/Balance.kt). Added in database version 4. */
+    @ColumnInfo(name = "mbs_mask", defaultValue = "0") val mbsMask: Int = 0,
 )
 
 @Entity(
@@ -113,6 +115,8 @@ data class Task(
     @ColumnInfo(name = "done_at") val doneAt: Long? = null,
     val points: Int = 0,
     val active: Boolean = true,
+    /** Mind = 1, Body = 2, Soul = 4. Added in database version 4. */
+    @ColumnInfo(name = "mbs_mask", defaultValue = "0") val mbsMask: Int = 0,
 )
 
 // ---- Added in database version 3 (Step 2: popups) ---------------------------------------------
@@ -161,4 +165,27 @@ data class HabitSkip(
     val promised: Boolean,
     /** Epoch milliseconds. */
     @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+
+// ---- Added in database version 4 -----------------------------------------------------------------
+
+enum class OathMethod { TAP, TYPED, SPOKEN }
+enum class PromiseStatus { OPEN, KEPT, BROKEN }
+
+/**
+ * "Can't today, I promise": the user names the day and time they will do the habit instead.
+ * KEPT when the habit is done on [dueDay]; BROKEN when that day closes without it.
+ */
+@Entity(tableName = "promise", indices = [Index("habit_id"), Index("due_day")])
+data class Promise(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "habit_id") val habitId: Long,
+    @ColumnInfo(name = "made_on") val madeOn: LocalDate,
+    @ColumnInfo(name = "due_day") val dueDay: LocalDate,
+    /** Epoch milliseconds of the promised time. */
+    @ColumnInfo(name = "due_at") val dueAt: Long,
+    @ColumnInfo(name = "oath_method") val oathMethod: OathMethod,
+    /** What the user typed or said, when an oath was needed. */
+    @ColumnInfo(name = "oath_text") val oathText: String? = null,
+    val status: PromiseStatus = PromiseStatus.OPEN,
 )

@@ -1,5 +1,8 @@
 package com.ayushpant.habitquest.stats
 
+import com.ayushpant.habitquest.balance.BalanceItem
+import com.ayushpant.habitquest.balance.DimensionScore
+import com.ayushpant.habitquest.balance.balance
 import com.ayushpant.habitquest.data.Habit
 import com.ayushpant.habitquest.data.HabitSkip
 import com.ayushpant.habitquest.data.RangeData
@@ -102,6 +105,8 @@ data class Summary(
     val dayPoints: Map<LocalDate, Int> = emptyMap(),
     /** Sessions that got the comeback bonus. */
     val comebacks: Int = 0,
+    /** Mind / Body / Soul for the period. */
+    val balance: List<DimensionScore> = emptyList(),
 ) {
     val scheduled get() = habits.sumOf { it.scheduled }
     val done get() = habits.sumOf { it.done }
@@ -222,6 +227,18 @@ fun buildSummary(data: RangeData, today: LocalDate): Summary {
             for (t in doneTasks) merge(t.doneDay!!, t.points, Int::plus)
         },
         comebacks = data.sessions.count { it.bonusPoints > 0 },
+        balance = run {
+            val masks = data.habits.associate { it.id to it.mbsMask }
+            val pointsByHabitDay = data.sessions.groupBy { it.habitId to it.day }.mapValues { (_, l) -> l.sumOf { it.points } }
+            val habitItems = cells.flatMap { cell ->
+                cell.habitDone.map { (habitId, done) ->
+                    BalanceItem(masks[habitId] ?: 0, planned = true, done = done, points = pointsByHabitDay[habitId to cell.day] ?: 0)
+                }
+            }
+            val taskItems = (dueTasks + doneTasks).distinctBy { it.id }
+                .map { BalanceItem(it.mbsMask, planned = true, done = inRange(it.doneDay), points = if (inRange(it.doneDay)) it.points else 0) }
+            balance(habitItems + taskItems)
+        },
     )
 }
 

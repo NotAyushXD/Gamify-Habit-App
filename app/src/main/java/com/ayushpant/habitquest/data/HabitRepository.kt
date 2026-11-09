@@ -2,6 +2,13 @@ package com.ayushpant.habitquest.data
 
 import android.util.Log
 import androidx.room.withTransaction
+import com.ayushpant.habitquest.balance.BalanceItem
+import com.ayushpant.habitquest.balance.Dimension
+import com.ayushpant.habitquest.balance.DimensionScore
+import com.ayushpant.habitquest.balance.balance
+import com.ayushpant.habitquest.balance.dimensionsOf
+import com.ayushpant.habitquest.balance.maskOf
+import com.ayushpant.habitquest.balance.suggestDimensions
 import com.ayushpant.habitquest.scoring.DayOutcome
 import com.ayushpant.habitquest.scoring.HabitRules
 import com.ayushpant.habitquest.scoring.ScoringConfig
@@ -62,6 +69,28 @@ data class TodayData(
     val tasks: List<TaskToday> = emptyList(),
 ) {
     val totalPoints get() = habits.sumOf { it.points } + dailyBonus + tasks.filter { it.isDone }.sumOf { it.points }
+
+    /**
+     * Today's Mind / Body / Soul meters. Planned: habits scheduled today (or done anyway) and tasks
+     * due today or earlier (or done today). Tasks due later are not part of today.
+     */
+    val balance: List<DimensionScore>
+        get() = balance(
+            habits.filter { it.scheduledToday || it.isDone }
+                .map { BalanceItem(it.habit.mbsMask, planned = true, done = it.isDone, points = it.points) } +
+                tasks.filter { it.isDone || it.task.dueDate <= day }
+                    .map { BalanceItem(it.task.mbsMask, planned = true, done = it.isDone, points = if (it.isDone) it.points else 0) }
+        )
+}
+
+/** The creature line follows the habit's main dimension: Body → strong, Soul → calm, Mind → wise. */
+fun creatureLineFor(mask: Int): CreatureLine {
+    val dims = dimensionsOf(mask)
+    return when {
+        Dimension.BODY in dims -> CreatureLine.STRONG
+        Dimension.SOUL in dims -> CreatureLine.CALM
+        else -> CreatureLine.WISE
+    }
 }
 
 /** Raw records for a date range. History and Summary build their views from it. */
@@ -148,7 +177,7 @@ class HabitRepository(
 
     /** Inserts a new habit (id = 0) or updates an existing one. Returns the id. */
     suspend fun saveHabit(habit: Habit): Long {
-        val clean = habit.copy(basePoints = cfg.basePoints) // fixed for everyone
+        val clean = habit.copy(basePoints = cfg.basePoints, creatureLine = creatureLineFor(habit.mbsMask)) // points fixed for everyone
         closePendingDays()
         return db.withTransaction {
             val id = if (clean.id == 0L) {
@@ -422,6 +451,7 @@ class HabitRepository(
         // The streak changed, so today's sessions (if any) get the new multiplier.
         if (closed > 0) db.withTransaction { rescoreDay(today()) }
         applyRuleChanges()
+        backfillDimensions()
         db.signals().deleteOlderThan(clock.millis() - Duration.ofDays(SIGNAL_LOG_DAYS).toMillis())
         return closed
     }
@@ -460,6 +490,22 @@ class HabitRepository(
         Log.i(LOG_TAG, "Streaks recalculated with rules v$RULES_VERSION")
     }
 
+    /** Habits and tasks made before Mind / Body / Soul existed get a suggestion from their name, once. */
+    private suspend fun backfillDimensions() {
+        if (db.appState().get(KEY_MBS_BACKFILL) != null) return
+        db.withTransaction {
+            for (h in db.habits().getActive().filter { it.mbsMask == 0 }) {
+                val mask = maskOf(suggestDimensions(h.name))
+                if (mask != 0) db.habits().update(h.copy(mbsMask = mask, creatureLine = creatureLineFor(mask)))
+            }
+            for (t in db.tasks().getOpen().filter { it.mbsMask == 0 }) {
+                val mask = maskOf(suggestDimensions(t.name))
+                if (mask != 0) db.tasks().update(t.copy(mbsMask = mask))
+            }
+            db.appState().put(AppState(KEY_MBS_BACKFILL, "1"))
+        }
+    }
+
     suspend fun recordTaskRun(task: String) {
         db.appState().put(AppState("task_last_run.$task", Instant.now(clock).toString()))
     }
@@ -471,6 +517,7 @@ class HabitRepository(
     private companion object {
         const val KEY_LAST_CLOSED = "last_closed_day"
         const val KEY_RULES_VERSION = "streak_rules_version"
+        const val KEY_MBS_BACKFILL = "mbs_backfill"
         /** Raise this when the streak rules change, so stored streaks are walked again. */
         const val RULES_VERSION = 2
         const val SIGNAL_LOG_DAYS = 14L
