@@ -90,6 +90,15 @@ class EggRulesTest {
     }
 
     @Test
+    fun `every creature has its own three spar moves`() {
+        for (c in creatures) {
+            val names = Themes.CREATURES.moveNames(c.id, c.dimension)
+            assertEquals(c.id, 3, names.size)
+            assertEquals(names, Themes.CREATURES.text.sparMovesByCreature[c.id]) // its own, not the fallback
+        }
+    }
+
+    @Test
     fun `companion stages start at 30 and 100 bond`() {
         assertEquals(1, companionStage(0))
         assertEquals(1, companionStage(29))

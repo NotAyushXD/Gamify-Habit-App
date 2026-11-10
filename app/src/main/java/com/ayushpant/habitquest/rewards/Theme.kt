@@ -37,16 +37,28 @@ data class ThemeText(
     val welcomeBack: (name: String) -> String,
     val chooseCompanion: String,
     val notYet: String,
-    /** Step 5h: the three move names per dimension, in slot order: push, big move, rest. */
+    /** Step 5h: three move names per creature id, in slot order: push, big move, rest. */
+    val sparMovesByCreature: Map<String, List<String>>,
+    /** Used for a creature without its own names. */
     val sparMoves: Map<Dimension, List<String>>,
     val sparIntro: (opponent: String) -> String,
+    val sparGo: (mine: String) -> String,
     val sparWon: (opponent: String) -> String,
     val sparLost: (mine: String) -> String,
     val sparDraw: String,
+    val sparStrong: String,
+    val sparWeak: String,
+    val sparMissed: (who: String) -> String,
+    val sparFailed: String,
+    val sparRun: String,
 )
 
 data class Theme(val id: String, val name: String, val text: ThemeText, val creatures: List<CreatureDef>) {
     fun creature(id: String): CreatureDef? = creatures.firstOrNull { it.id == id }
+
+    /** A creature's three move names (push, big move, rest) for the spar screen. */
+    fun moveNames(creatureId: String, dimension: Dimension): List<String> =
+        text.sparMovesByCreature[creatureId] ?: text.sparMoves.getValue(dimension)
 }
 
 object Themes {
@@ -72,15 +84,43 @@ object Themes {
             welcomeBack = { name -> "Welcome back! $name missed you." },
             chooseCompanion = "Choose",
             notYet = "Not hatched yet",
-            sparMoves = mapOf(
-                Dimension.MIND to listOf("Bright Idea", "Star Riddle", "Deep Breath"),
-                Dimension.BODY to listOf("Quick Dash", "Mighty Hop", "Stretch Out"),
-                Dimension.SOUL to listOf("Gentle Breeze", "Glow Wave", "Warm Hum"),
+            // Classic-style move names, approved by the developer with the creature names (Nov 10, 2026).
+            sparMovesByCreature = mapOf(
+                "squirtgorgon" to listOf("Tackle", "Water Gun", "Rest"),
+                "wartorion" to listOf("Bubble", "Water Pulse", "Rest"),
+                "blastochimera" to listOf("Water Gun", "Hydro Pump", "Rest"),
+                "caterstellar" to listOf("Tackle", "Bug Bite", "Rest"),
+                "metapodas" to listOf("Tackle", "Bug Buzz", "Recover"),
+                "butterfreeas" to listOf("Gust", "Psybeam", "Recover"),
+                "charignis" to listOf("Scratch", "Ember", "Rest"),
+                "charmelion" to listOf("Ember", "Flame Wheel", "Rest"),
+                "charititan" to listOf("Wing Attack", "Flamethrower", "Roost"),
+                "pikastellar" to listOf("Quick Attack", "Thunder Shock", "Rest"),
+                "raichura" to listOf("Quick Attack", "Thunderbolt", "Rest"),
+                "geodudonis" to listOf("Tackle", "Rock Throw", "Rest"),
+                "bulbavulpis" to listOf("Tackle", "Vine Whip", "Synthesis"),
+                "iviscar" to listOf("Vine Whip", "Razor Leaf", "Synthesis"),
+                "venusauris" to listOf("Razor Leaf", "Solar Beam", "Synthesis"),
+                "gengachimera" to listOf("Lick", "Shadow Ball", "Recover"),
+                "snorlaura" to listOf("Headbutt", "Body Slam", "Rest"),
+                "dragonairis" to listOf("Twister", "Dragon Pulse", "Recover"),
             ),
-            sparIntro = { opp -> "$opp wants a friendly spar!" },
-            sparWon = { opp -> "$opp takes a breather and bows. You won!" },
-            sparLost = { mine -> "$mine takes a breather. Good spar! Every session makes $mine stronger." },
-            sparDraw = "A long match and nobody tired out. A draw, and a good one.",
+            sparMoves = mapOf(
+                Dimension.MIND to listOf("Tackle", "Psybeam", "Rest"),
+                Dimension.BODY to listOf("Tackle", "Ember", "Rest"),
+                Dimension.SOUL to listOf("Tackle", "Vine Whip", "Synthesis"),
+            ),
+            // R5: at 0 HP a creature is worn out and bows; nobody faints.
+            sparIntro = { opp -> "A wild $opp appeared!" },
+            sparGo = { mine -> "Go! $mine!" },
+            sparWon = { opp -> "Wild $opp is worn out and bows! You won!" },
+            sparLost = { mine -> "$mine is worn out and takes a breather. Good battle! Every session makes $mine stronger." },
+            sparDraw = "Both are tired out. It's a draw!",
+            sparStrong = "It's super effective!",
+            sparWeak = "It's not very effective…",
+            sparMissed = { who -> "$who's attack missed!" },
+            sparFailed = "But it failed!",
+            sparRun = "Got away safely!",
         ),
         // Names chosen by the developer, who reports approval from The Pokémon Company (Nov 10, 2026).
         // 6 per dimension; each evolution line stays in one dimension. Blurbs stay calm and kind (R4, R5).

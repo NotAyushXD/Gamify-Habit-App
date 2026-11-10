@@ -181,7 +181,7 @@ class SummaryRenderTest {
         save(out, "spar-pick.png")
         compose.onNodeWithText("Start a spar (uses 1 ticket)").performClick()
         // Starting writes the spar in the background; wait for the battle before the picture.
-        runCatching { compose.waitUntil(5_000) { compose.onAllNodesWithText("Energy", substring = true).fetchSemanticsNodes().isNotEmpty() } }
+        runCatching { compose.waitUntil(5_000) { compose.onAllNodesWithText("HP:", substring = true).fetchSemanticsNodes().isNotEmpty() } }
         compose.mainClock.advanceTimeBy(1_000)
         save(out, "spar-battle.png")
         db.close()

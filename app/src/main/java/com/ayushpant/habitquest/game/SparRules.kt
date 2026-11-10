@@ -73,10 +73,11 @@ fun moveAmount(move: Move, attackerPower: Int, matchup: Int, variance: Double, c
     return max(1, (move.power * attackerPower / cfg.powerScale * factor * variance).roundToInt())
 }
 
-data class Fighter(val name: String, val dimension: Dimension, val power: Int, val energy: Int, val restsLeft: Int)
+/** [id] is the creature id of the theme, for its move names and picture. */
+data class Fighter(val name: String, val dimension: Dimension, val power: Int, val energy: Int, val restsLeft: Int, val id: String = "")
 
-fun fighter(name: String, dimension: Dimension, power: Int, cfg: SparConfig = SparConfig.DEFAULT) =
-    Fighter(name, dimension, power, cfg.maxEnergy, cfg.maxRests)
+fun fighter(name: String, dimension: Dimension, power: Int, cfg: SparConfig = SparConfig.DEFAULT, id: String = "") =
+    Fighter(name, dimension, power, cfg.maxEnergy, cfg.maxRests, id)
 
 enum class SparOutcome { PLAYING, WON, LOST, DRAW }
 
