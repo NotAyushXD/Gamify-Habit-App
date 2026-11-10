@@ -26,6 +26,21 @@ import com.ayushpant.habitquest.stats.Level
 import com.ayushpant.habitquest.stats.NudgeHabit
 import com.ayushpant.habitquest.stats.dailyNudge
 import com.ayushpant.habitquest.stats.levelFor
+import com.ayushpant.habitquest.rewards.CompanionState
+import com.ayushpant.habitquest.rewards.CreatureDef
+import com.ayushpant.habitquest.rewards.Theme
+import com.ayushpant.habitquest.rewards.Themes
+import com.ayushpant.habitquest.rewards.companionStage
+import com.ayushpant.habitquest.rewards.companionState
+import com.ayushpant.habitquest.rewards.eggTarget
+import com.ayushpant.habitquest.rewards.hatchDimension
+import com.ayushpant.habitquest.rewards.pickHatchling
+import com.ayushpant.habitquest.rewards.splitGrowth
+import com.ayushpant.habitquest.rewards.welcomesBack
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -71,6 +86,27 @@ data class TaskToday(
     val isDone get() = task.doneDay != null
 }
 
+/** The open egg, as the screens show it. [number] is 1 for the first egg. */
+data class EggView(val number: Int, val needed: Int, val total: Int, val mind: Int, val body: Int, val soul: Int) {
+    val progress: Float get() = (total.toFloat() / needed).coerceIn(0f, 1f)
+}
+
+/** A creature the user has, with its bond (confirmed sessions done together). */
+data class OwnedView(val ownedId: Long, val def: CreatureDef, val hatchDay: LocalDate, val bond: Int, val companion: Boolean)
+
+data class CompanionView(val owned: OwnedView, val stage: Int, val state: CompanionState, val welcomeBack: Boolean)
+
+/** Everything of the reward layer for the current theme (Step 5). */
+data class RewardsView(
+    val theme: Theme = Themes.CREATURES,
+    val egg: EggView? = null,
+    val owned: List<OwnedView> = emptyList(),
+    val companion: CompanionView? = null,
+)
+
+/** The reward rows before today's state is known (the companion's mood needs today's sessions). */
+private data class RewardsRaw(val theme: Theme, val egg: Egg?, val hatched: Int, val owned: List<OwnedCreature>, val bonds: Map<Long, Int>, val lastDoneBefore: LocalDate?)
+
 data class TodayData(
     val day: LocalDate,
     val habits: List<HabitToday>,
@@ -81,6 +117,7 @@ data class TodayData(
     val lifetimePoints: Int = 0,
     /** Coins the user has now: earned with points, spent on rewards (Step 5). */
     val coins: Int = 0,
+    val rewards: RewardsView = RewardsView(),
 ) {
     val level: Level get() = levelFor(lifetimePoints)
 
@@ -209,6 +246,32 @@ class HabitRepository(
         combine(db.sessions().observeTotalPoints(), db.dayBonus().observeTotalPoints(), db.tasks().observeTotalPoints()) { a, b, c -> a + b + c }
     ) { data, total -> data.copy(lifetimePoints = total) }
         .combine(db.coins().observeBalance()) { data, coins -> data.copy(coins = coins) }
+        .combine(observeRewardsRaw(day)) { data, raw ->
+            val doneToday = data.habits.any { it.isDone }
+            val owned = raw.owned.mapNotNull { o ->
+                raw.theme.creature(o.creatureId)?.let { OwnedView(o.id, it, o.hatchDay, raw.bonds[o.id] ?: 0, o.companion) }
+            }
+            val companion = owned.firstOrNull { it.companion }?.let {
+                CompanionView(
+                    it, companionStage(it.bond, cfg), companionState(doneToday, raw.lastDoneBefore, day, cfg),
+                    welcomesBack(doneToday, raw.lastDoneBefore, day, cfg),
+                )
+            }
+            val egg = raw.egg?.let { EggView(raw.hatched + 1, it.needed, it.total, it.growthMind, it.growthBody, it.growthSoul) }
+            data.copy(rewards = RewardsView(raw.theme, egg, owned, companion))
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeRewardsRaw(day: LocalDate): Flow<RewardsRaw> =
+        db.appState().observe(KEY_THEME).map { Themes.byId(it) }.distinctUntilChanged().flatMapLatest { theme ->
+            combine(
+                db.eggs().observeOpen(theme.id),
+                db.eggs().observeCountHatched(theme.id),
+                db.creatures().observeOwned(theme.id),
+                db.creatures().observeBonds(),
+                db.sessions().observeLastConfirmedDayBefore(day),
+            ) { egg, hatched, owned, bonds, last -> RewardsRaw(theme, egg, hatched, owned, bonds.associate { it.ownedId to it.bond }, last) }
+        }
 
     suspend fun getHabit(id: Long): Habit? = db.habits().get(id)
 
@@ -736,6 +799,9 @@ class HabitRepository(
         for (b in db.dayBonus().getAll()) credit("bonus:${b.day}", b.points, CoinReason.DAY_BONUS, 0, "Perfect day", record)
         for (t in db.tasks().getDone()) credit("task:${t.id}", t.points, CoinReason.TASK, t.mbsMask, t.name, record)
         if (db.appState().get(KEY_COINS_STARTED) == null) db.appState().put(AppState(KEY_COINS_STARTED, today().toString()))
+        val theme = currentTheme()
+        bondSessions(theme)
+        if (db.eggs().getOpen(theme.id) == null) newEgg(theme, 0) // the first egg shows before any coin
     }
 
     private suspend fun credit(key: String, points: Int, reason: CoinReason, mbsMask: Int, note: String?, recordOnly: Boolean) {
@@ -744,8 +810,83 @@ class HabitRepository(
         if (gain <= 0) return
         if (!recordOnly) {
             db.coins().insert(CoinLedger(time = clock.millis(), amount = gain, reason = reason, sourceKey = key, mbsMask = mbsMask, note = note))
+            grow(gain, mbsMask) // 5b: every coin earned is 1 growth for the egg
         }
         db.coins().putCredit(CoinCredit(key, points))
+    }
+
+    /**
+     * Spends coins (a personal reward, a stored freeze). The only way the balance goes down (R6).
+     * Returns false, and changes nothing, when the balance is too low. Growth never changes.
+     */
+    suspend fun spendCoins(amount: Int, reason: CoinReason, note: String?): Boolean {
+        require(amount > 0)
+        val ok = db.withTransaction {
+            if (db.coins().balance() < amount) return@withTransaction false
+            db.coins().insert(CoinLedger(time = clock.millis(), amount = -amount, reason = reason, note = note))
+            true
+        }
+        if (ok) onChange()
+        return ok
+    }
+
+    // ---- Egg, creatures and companion (Step 5b) --------------------------------------------------
+
+    suspend fun currentTheme(): Theme = Themes.byId(db.appState().get(KEY_THEME))
+
+    /** The user picks which of their creatures is the companion on Today. */
+    suspend fun setCompanion(ownedId: Long) {
+        val o = db.creatures().get(ownedId) ?: return
+        db.creatures().setCompanion(o.themeId, o.id)
+    }
+
+    /** Adds growth from coins just earned, shared by the source's dimensions, and hatches when full. */
+    private suspend fun grow(amount: Int, mbsMask: Int) {
+        val theme = currentTheme()
+        var egg = db.eggs().getOpen(theme.id) ?: newEgg(theme, 0)
+        val split = splitGrowth(amount, mbsMask)
+        egg = egg.copy(
+            growthMind = egg.growthMind + (split[Dimension.MIND] ?: 0),
+            growthBody = egg.growthBody + (split[Dimension.BODY] ?: 0),
+            growthSoul = egg.growthSoul + (split[Dimension.SOUL] ?: 0),
+        )
+        db.eggs().update(egg)
+        while (egg.total >= egg.needed) {
+            val surplus = egg.total - egg.needed
+            hatch(theme, egg)
+            egg = newEgg(theme, surplus) // a new egg starts at once; growth above the target carries over
+        }
+    }
+
+    private suspend fun newEgg(theme: Theme, carry: Int): Egg {
+        val (needed, start) = eggTarget(db.eggs().countHatched(theme.id), cfg)
+        val egg = Egg(themeId = theme.id, needed = needed, headStart = start + carry, startedDay = today())
+        return egg.copy(id = db.eggs().insert(egg))
+    }
+
+    /** The egg is full: a creature the user does not have joins, or coins when all are owned. */
+    private suspend fun hatch(theme: Theme, egg: Egg) {
+        val owned = db.creatures().getOwned(theme.id)
+        val counts = Dimension.entries.associateWith { d -> owned.count { theme.creature(it.creatureId)?.dimension == d } }
+        val growth = mapOf(Dimension.MIND to egg.growthMind, Dimension.BODY to egg.growthBody, Dimension.SOUL to egg.growthSoul)
+        val def = pickHatchling(hatchDimension(growth, counts), owned.map { it.creatureId }.toSet(), theme.creatures)
+        if (def == null) {
+            db.coins().insert(CoinLedger(time = clock.millis(), amount = cfg.fullCollectionCoins, reason = CoinReason.FULL_COLLECTION, note = "Collection complete"))
+        } else {
+            db.creatures().insert(OwnedCreature(themeId = theme.id, creatureId = def.id, hatchDay = today(), companion = owned.isEmpty()))
+        }
+        db.eggs().update(egg.copy(hatchedDay = today(), creatureId = def?.id))
+        logSignal(SignalKind.TASK, "hatch ${def?.id ?: "collection complete"}")
+    }
+
+    /**
+     * Each confirmed session is 1 bond for the companion of that moment. A session is counted once;
+     * sessions from before there was a companion count for nobody (owned id 0).
+     */
+    private suspend fun bondSessions(theme: Theme) {
+        val companionId = db.creatures().getOwned(theme.id).firstOrNull { it.companion }?.id ?: 0L
+        val bonded = db.creatures().bondedSessionIds().toSet()
+        for (id in db.sessions().getConfirmedIds()) if (id !in bonded) db.creatures().insertBond(BondEvent(id, companionId))
     }
 
     /**
@@ -793,6 +934,8 @@ class HabitRepository(
         const val KEY_MBS_BACKFILL = "mbs_backfill"
         /** Set the first time coins are settled; points from before that day give no coins. */
         const val KEY_COINS_STARTED = "coins_started"
+        /** The chosen theme id (5g); absent = the first theme. */
+        const val KEY_THEME = "theme"
         /** Raise this when the streak rules change, so stored streaks are walked again. */
         const val RULES_VERSION = 2
         const val SIGNAL_LOG_DAYS = 14L

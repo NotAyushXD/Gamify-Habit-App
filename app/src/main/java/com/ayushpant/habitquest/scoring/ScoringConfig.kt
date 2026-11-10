@@ -93,6 +93,20 @@ data class ScoringConfig(
     // Streak lengths that get a big celebration.
     val streakMilestones: List<Int> = listOf(3, 7, 14, 21, 30, 50, 75, 100, 150, 200, 365),
 
+    // Step 5b: the egg and the companion (values approved by the developer on Nov 10, 2026).
+    /** The first egg needs this much growth (1 growth per coin earned) and starts with a head start. */
+    val eggFirstGrowth: Int = 100,
+    val eggFirstStart: Int = 20,
+    val eggLaterGrowth: Int = 300,
+    val eggLaterStart: Int = 30,
+    /** Coins instead of a creature when all creatures of the theme are owned. */
+    val fullCollectionCoins: Int = 100,
+    /** Bond (confirmed sessions with the companion) at which it reaches stage 2 and 3. */
+    val companionStage2Bond: Int = 30,
+    val companionStage3Bond: Int = 100,
+    /** Days without a confirmed session after which the companion rests. */
+    val companionRestingDays: Long = 2,
+
     // 6.3 Day close runs at this time and closes the previous day.
     val dayCloseTime: LocalTime = LocalTime.of(0, 5),
 ) {

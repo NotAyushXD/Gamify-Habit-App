@@ -158,6 +158,7 @@ fun TodayScreen(
     onAdd: (ItemKind) -> Unit,
     onEditHabit: (Long) -> Unit,
     onEditTask: (Long) -> Unit,
+    onCollection: () -> Unit = {},
 ) {
     val data by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -198,7 +199,7 @@ fun TodayScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(bottom = 96.dp), // room for the + button
             ) {
-                item(key = "header") { Header(today) }
+                item(key = "header") { Header(today, onCollection) }
                 stickyHeader(key = "switch") {
                     Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp, vertical = 8.dp)) {
                         val scheduled = today.habits.count { it.scheduledToday }
@@ -322,7 +323,7 @@ private fun greeting(hour: Int) = when (hour) {
 
 /** The top of Today: greeting, the day's ring with points, level, and one line of encouragement. */
 @Composable
-private fun Header(today: TodayData) {
+private fun Header(today: TodayData, onCollection: () -> Unit) {
     val level = today.level
     val scheduled = today.habits.count { it.scheduledToday }
     val done = today.habits.count { it.scheduledToday && it.isDone }
@@ -361,6 +362,7 @@ private fun Header(today: TodayData) {
                 if (today.balance.any { it.planned > 0 }) BalanceRow(today.balance, Modifier.padding(top = 14.dp))
             }
         }
+        CompanionCard(today.rewards, onClick = onCollection)
         val line = today.nudge
         Column {
             if (line != null && !line.startsWith("🌟")) Text(line, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)

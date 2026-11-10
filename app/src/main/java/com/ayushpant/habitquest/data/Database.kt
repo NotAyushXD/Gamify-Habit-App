@@ -78,6 +78,13 @@ interface SessionDao {
     @Query("UPDATE session SET points = :points, bonus_points = :bonusPoints WHERE id = :id")
     suspend fun setPoints(id: Long, points: Int, bonusPoints: Int)
 
+    @Query("SELECT id FROM session WHERE status = 'CONFIRMED'")
+    suspend fun getConfirmedIds(): List<Long>
+
+    /** The last day before [day] with a confirmed session, for the companion's mood. */
+    @Query("SELECT MAX(day) FROM session WHERE status = 'CONFIRMED' AND day < :day")
+    fun observeLastConfirmedDayBefore(day: LocalDate): Flow<LocalDate?>
+
     /** Confirmed points per habit and day, for paying coins (one source per habit per day). */
     @Query("SELECT habit_id AS habitId, day, SUM(points) AS points FROM session WHERE status = 'CONFIRMED' GROUP BY habit_id, day")
     suspend fun pointsByHabitDay(): List<HabitDayPoints>
@@ -248,6 +255,9 @@ interface AppStateDao {
     @Query("SELECT value FROM app_state WHERE `key` = :key")
     suspend fun get(key: String): String?
 
+    @Query("SELECT value FROM app_state WHERE `key` = :key")
+    fun observe(key: String): Flow<String?>
+
     @Upsert
     suspend fun put(row: AppState)
 
@@ -279,6 +289,57 @@ interface CoinDao {
     suspend fun putCredit(row: CoinCredit)
 }
 
+@Dao
+interface EggDao {
+    @Query("SELECT * FROM egg WHERE theme_id = :themeId AND hatched_day IS NULL ORDER BY id DESC LIMIT 1")
+    fun observeOpen(themeId: String): Flow<Egg?>
+
+    @Query("SELECT * FROM egg WHERE theme_id = :themeId AND hatched_day IS NULL ORDER BY id DESC LIMIT 1")
+    suspend fun getOpen(themeId: String): Egg?
+
+    @Query("SELECT COUNT(*) FROM egg WHERE theme_id = :themeId AND hatched_day IS NOT NULL")
+    suspend fun countHatched(themeId: String): Int
+
+    @Query("SELECT COUNT(*) FROM egg WHERE theme_id = :themeId AND hatched_day IS NOT NULL")
+    fun observeCountHatched(themeId: String): Flow<Int>
+
+    @Insert
+    suspend fun insert(egg: Egg): Long
+
+    @Update
+    suspend fun update(egg: Egg)
+}
+
+/** One row of [CreatureDao.observeBonds]. */
+data class BondCount(val ownedId: Long, val bond: Int)
+
+@Dao
+interface CreatureDao {
+    @Query("SELECT * FROM creature_owned WHERE theme_id = :themeId ORDER BY id")
+    fun observeOwned(themeId: String): Flow<List<OwnedCreature>>
+
+    @Query("SELECT * FROM creature_owned WHERE theme_id = :themeId ORDER BY id")
+    suspend fun getOwned(themeId: String): List<OwnedCreature>
+
+    @Query("SELECT * FROM creature_owned WHERE id = :id")
+    suspend fun get(id: Long): OwnedCreature?
+
+    @Insert
+    suspend fun insert(row: OwnedCreature): Long
+
+    @Query("UPDATE creature_owned SET companion = (id = :id) WHERE theme_id = :themeId")
+    suspend fun setCompanion(themeId: String, id: Long)
+
+    @Query("SELECT owned_id AS ownedId, COUNT(*) AS bond FROM bond_event GROUP BY owned_id")
+    fun observeBonds(): Flow<List<BondCount>>
+
+    @Query("SELECT session_id FROM bond_event")
+    suspend fun bondedSessionIds(): List<Long>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.IGNORE)
+    suspend fun insertBond(row: BondEvent)
+}
+
 /** Tells Room how to store java.time types. Dates and times are stored as ISO text, e.g. "2026-11-04". */
 class Converters {
     @TypeConverter fun dateToText(d: LocalDate?): String? = d?.toString()
@@ -288,14 +349,14 @@ class Converters {
 }
 
 @Database(
-    version = 6,
+    version = 7,
     entities = [
         Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
         Settings::class, ReminderLog::class, HabitSkip::class, Promise::class, Zone::class,
-        CoinLedger::class, CoinCredit::class,
+        CoinLedger::class, CoinCredit::class, Egg::class, OwnedCreature::class, BondEvent::class,
     ],
     // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -313,6 +374,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun promises(): PromiseDao
     abstract fun zones(): ZoneDao
     abstract fun coins(): CoinDao
+    abstract fun eggs(): EggDao
+    abstract fun creatures(): CreatureDao
 
     companion object {
         fun create(context: Context): AppDatabase =

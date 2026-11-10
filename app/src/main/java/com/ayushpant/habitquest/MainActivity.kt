@@ -37,6 +37,7 @@ import com.ayushpant.habitquest.ui.WelcomeScreen
 import com.ayushpant.habitquest.ui.GuideAction
 import com.ayushpant.habitquest.ui.GuideScreen
 import com.ayushpant.habitquest.ui.ZonesScreen
+import com.ayushpant.habitquest.ui.CollectionScreen
 import kotlinx.coroutines.launch
 import com.ayushpant.habitquest.ui.HabitQuestTheme
 import com.ayushpant.habitquest.ui.HistoryScreen
@@ -115,6 +116,7 @@ class MainActivity : ComponentActivity() {
                                 onAdd = { kind -> nav.navigate(if (kind == ItemKind.TASK) "task/0" else "habit/0") },
                                 onEditHabit = { id -> nav.navigate("habit/$id") },
                                 onEditTask = { id -> nav.navigate("task/$id") },
+                                onCollection = { nav.navigate("collection") },
                             )
                         }
                         composable("history") {
@@ -133,6 +135,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         composable("zones") { ZonesScreen(repo, onBack = { nav.popBackStack() }) }
+                        composable("collection") { CollectionScreen(repo, onBack = { nav.popBackStack() }) }
                         composable("guide") {
                             GuideScreen(onBack = { nav.popBackStack() }) { action ->
                                 when (action) {

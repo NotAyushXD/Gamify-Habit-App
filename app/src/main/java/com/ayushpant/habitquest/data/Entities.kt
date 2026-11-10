@@ -208,7 +208,7 @@ data class Zone(
 // ---- Added in database version 6 (Step 5a: coins) --------------------------------------------------
 
 /** Why coins moved. Earned reasons come with points; spent reasons come from the user. */
-enum class CoinReason { HABIT, DAY_BONUS, TASK }
+enum class CoinReason { HABIT, DAY_BONUS, TASK, FULL_COLLECTION, REWARD }
 
 /**
  * Every coin movement, one row each. The balance is the sum of [amount]. Coins come with points
@@ -239,4 +239,48 @@ data class CoinLedger(
 data class CoinCredit(
     @PrimaryKey @ColumnInfo(name = "source_key") val sourceKey: String,
     val credited: Int,
+)
+
+// ---- Added in database version 7 (Step 5b: egg, creatures, companion) ---------------------------
+
+/**
+ * One egg. Growth comes with coins (1 each), shared between Mind, Body and Soul by the source's
+ * dimensions; [headStart] (and surplus from the egg before) has no dimension. It hatches when
+ * the total reaches [needed]. One open egg per theme ([hatchedDay] null).
+ */
+@Entity(tableName = "egg", indices = [Index("theme_id")])
+data class Egg(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "theme_id") val themeId: String,
+    val needed: Int,
+    @ColumnInfo(name = "head_start") val headStart: Int,
+    @ColumnInfo(name = "growth_mind") val growthMind: Int = 0,
+    @ColumnInfo(name = "growth_body") val growthBody: Int = 0,
+    @ColumnInfo(name = "growth_soul") val growthSoul: Int = 0,
+    @ColumnInfo(name = "started_day") val startedDay: LocalDate,
+    @ColumnInfo(name = "hatched_day") val hatchedDay: LocalDate? = null,
+    /** The creature that came out; null while open, or when the collection was already complete. */
+    @ColumnInfo(name = "creature_id") val creatureId: String? = null,
+) {
+    val total: Int get() = headStart + growthMind + growthBody + growthSoul
+}
+
+/** A creature the user has. [creatureId] names a creature of the theme. One per theme is the companion. */
+@Entity(tableName = "creature_owned", indices = [Index("theme_id")])
+data class OwnedCreature(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "theme_id") val themeId: String,
+    @ColumnInfo(name = "creature_id") val creatureId: String,
+    @ColumnInfo(name = "hatch_day") val hatchDay: LocalDate,
+    val companion: Boolean = false,
+)
+
+/**
+ * One confirmed session counted as bond for the companion of that moment. Keyed by the session,
+ * so a session is never counted twice; the row stays if the session is removed later (R1).
+ */
+@Entity(tableName = "bond_event", indices = [Index("owned_id")])
+data class BondEvent(
+    @PrimaryKey @ColumnInfo(name = "session_id") val sessionId: Long,
+    @ColumnInfo(name = "owned_id") val ownedId: Long,
 )
