@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,7 +47,7 @@ private val HATCH_DAY = DateTimeFormatter.ofPattern("d MMM")
 /** All creatures of the theme (step 5b, 18 in the first theme): the ones hatched, grey shapes for the rest, and the egg. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CollectionScreen(repo: HabitRepository, onBack: () -> Unit) {
+fun CollectionScreen(repo: HabitRepository, onBack: () -> Unit, onSpar: () -> Unit = {}) {
     val data by repo.observeToday(repo.today()).collectAsStateWithLifecycle(initialValue = null)
     val scope = rememberCoroutineScope()
     val rewards = data?.rewards ?: RewardsView()
@@ -61,6 +62,9 @@ fun CollectionScreen(repo: HabitRepository, onBack: () -> Unit) {
     ) { inner ->
         LazyColumn(Modifier.fillMaxSize().padding(inner), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { EggCard(rewards) }
+            if (rewards.owned.isNotEmpty()) item {
+                Button(onClick = onSpar, modifier = Modifier.fillMaxWidth()) { Text("⚔️ Spar with your creatures") }
+            }
             item {
                 Text(
                     "${rewards.owned.size} of ${theme.creatures.size} hatched. Tap a creature to make it your ${theme.text.companionName}.",

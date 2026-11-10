@@ -39,6 +39,7 @@ import com.ayushpant.habitquest.ui.GuideScreen
 import com.ayushpant.habitquest.ui.ZonesScreen
 import com.ayushpant.habitquest.ui.CollectionScreen
 import com.ayushpant.habitquest.ui.RewardsScreen
+import com.ayushpant.habitquest.ui.SparScreen
 import kotlinx.coroutines.launch
 import com.ayushpant.habitquest.ui.HabitQuestTheme
 import com.ayushpant.habitquest.ui.HistoryScreen
@@ -137,7 +138,8 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         composable("zones") { ZonesScreen(repo, onBack = { nav.popBackStack() }) }
-                        composable("collection") { CollectionScreen(repo, onBack = { nav.popBackStack() }) }
+                        composable("collection") { CollectionScreen(repo, onBack = { nav.popBackStack() }, onSpar = { nav.navigate("spar") }) }
+                        composable("spar") { SparScreen(repo, onBack = { nav.popBackStack() }) }
                         composable("rewards") { RewardsScreen(repo, onBack = { nav.popBackStack() }) }
                         composable("guide") {
                             GuideScreen(onBack = { nav.popBackStack() }) { action ->

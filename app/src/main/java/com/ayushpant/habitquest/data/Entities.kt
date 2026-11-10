@@ -224,9 +224,10 @@ data class Zone(
 
 /**
  * Why coins moved. Earned reasons come with points; spent reasons come from the user.
- * CORRECTION: the user undid a tick, so the coins of that item went back (stored as text: no schema change).
+ * CORRECTION: the user undid a tick, so the coins of that item went back. SPAR: a spar won (5h).
+ * Stored as text: new reasons need no schema change.
  */
-enum class CoinReason { HABIT, DAY_BONUS, TASK, FULL_COLLECTION, REWARD, CORRECTION }
+enum class CoinReason { HABIT, DAY_BONUS, TASK, FULL_COLLECTION, REWARD, CORRECTION, SPAR }
 
 /**
  * Every coin movement, one row each. The balance is the sum of [amount]. Coins come with points
@@ -329,4 +330,27 @@ data class RewardRedemption(
     /** Epoch milliseconds. */
     val time: Long,
     val day: LocalDate,
+)
+
+// ---- Added in database version 10 (Step 5h: sparring) -------------------------------------------
+
+/** How a spar ended. Null on [Spar.result] = left before the end (the ticket stays used). */
+enum class SparResult { WON, LOST, DRAW }
+
+/**
+ * One spar. The row is written when the spar starts, so it uses a ticket at once (tickets: one per
+ * confirmed session that day). [result] is set once, at the end.
+ */
+@Entity(tableName = "spar", indices = [Index("day")])
+data class Spar(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val day: LocalDate,
+    /** Epoch milliseconds. */
+    val time: Long,
+    /** The user's creature (creature_owned.id). */
+    @ColumnInfo(name = "owned_id") val ownedId: Long,
+    /** The app's creature (a creature id of the theme). */
+    @ColumnInfo(name = "opponent_id") val opponentId: String,
+    @ColumnInfo(name = "opponent_power") val opponentPower: Int,
+    val result: SparResult? = null,
 )

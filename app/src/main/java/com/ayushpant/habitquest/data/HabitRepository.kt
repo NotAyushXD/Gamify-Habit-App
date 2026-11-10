@@ -950,6 +950,50 @@ class HabitRepository(
         return ok
     }
 
+    // ---- Sparring (Step 5h) ------------------------------------------------------------------------
+
+    /** Spar tickets left today: one per confirmed session today, minus spars started today (never below 0). */
+    fun observeSparTickets(day: LocalDate = today()): Flow<Int> =
+        combine(db.sessions().observeConfirmedCountOn(day), db.spars().observeCountOn(day)) { sessions, used -> (sessions - used).coerceAtLeast(0) }
+
+    suspend fun sparTicketsLeft(): Int = (db.sessions().confirmedCountOn(today()) - db.spars().countOn(today())).coerceAtLeast(0)
+
+    /**
+     * Starts a spar with one of the user's creatures (of the current theme). It uses a ticket now,
+     * so leaving early does not give it back. Returns the spar id, or null when no ticket is left.
+     */
+    suspend fun startSpar(ownedId: Long, opponentId: String, opponentPower: Int): Long? {
+        val id = db.withTransaction {
+            val owned = db.creatures().get(ownedId)?.takeIf { it.themeId == currentTheme().id } ?: return@withTransaction null
+            if (sparTicketsLeft() <= 0) return@withTransaction null
+            db.spars().insert(Spar(day = today(), time = clock.millis(), ownedId = owned.id, opponentId = opponentId, opponentPower = opponentPower))
+        }
+        if (id != null) onChange()
+        return id
+    }
+
+    /**
+     * Records how a spar ended, once. A win pays [ScoringConfig.sparWinCoins] (they grow the egg,
+     * like every coin earned) and [ScoringConfig.sparWinBond] bond for the creature that sparred.
+     * A loss or a draw changes nothing (R1). Returns false when the spar was already finished.
+     */
+    suspend fun finishSpar(sparId: Long, result: SparResult): Boolean {
+        val ok = db.withTransaction {
+            val s = db.spars().get(sparId) ?: return@withTransaction false
+            if (s.result != null) return@withTransaction false
+            db.spars().update(s.copy(result = result))
+            if (result == SparResult.WON) {
+                db.coins().insert(CoinLedger(time = clock.millis(), amount = cfg.sparWinCoins, reason = CoinReason.SPAR, sourceKey = "spar:$sparId", note = "Spar won"))
+                grow(cfg.sparWinCoins, 0)
+                // Bond rows are keyed by session id; a spar's bond uses negative ids so they never collide.
+                repeat(cfg.sparWinBond) { i -> db.creatures().insertBond(BondEvent(sessionId = -(sparId * 10 + i), ownedId = s.ownedId)) }
+            }
+            true
+        }
+        if (ok) onChange()
+        return ok
+    }
+
     // ---- Egg, creatures and companion (Step 5b) --------------------------------------------------
 
     suspend fun currentTheme(): Theme = Themes.byId(db.appState().get(KEY_THEME))

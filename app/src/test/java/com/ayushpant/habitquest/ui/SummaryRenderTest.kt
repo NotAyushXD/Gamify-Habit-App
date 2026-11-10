@@ -163,6 +163,31 @@ class SummaryRenderTest {
     }
 
     @Test
+    fun renderSpar() {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries().build()
+        val repo = HabitRepository(db)
+        runBlocking {
+            val habit = repo.saveHabit(Habit(name = "Meditate", windowStart = LocalTime.of(0, 0), windowEnd = LocalTime.of(23, 59), basePoints = 10, creatureLine = CreatureLine.CALM, daysMask = EVERY_DAY_MASK, createdDate = repo.today()))
+            repo.tickHabit(habit) // one ticket
+            val creatures = com.ayushpant.habitquest.rewards.Themes.CREATURES.creatures
+            listOf(0, 7).forEachIndexed { i, c ->
+                db.creatures().insert(OwnedCreature(themeId = com.ayushpant.habitquest.rewards.Themes.DEFAULT_ID, creatureId = creatures[c].id, hatchDay = repo.today(), companion = i == 0))
+            }
+        }
+        val out = File("build/render").apply { mkdirs() }
+        compose.setContent { HabitQuestTheme { SparScreen(repo, onBack = {}) } }
+        compose.mainClock.advanceTimeBy(1_000)
+        save(out, "spar-pick.png")
+        compose.onNodeWithText("Start a spar (uses 1 ticket)").performClick()
+        // Starting writes the spar in the background; wait for the battle before the picture.
+        runCatching { compose.waitUntil(5_000) { compose.onAllNodesWithText("Energy", substring = true).fetchSemanticsNodes().isNotEmpty() } }
+        compose.mainClock.advanceTimeBy(1_000)
+        save(out, "spar-battle.png")
+        db.close()
+    }
+
+    @Test
     fun renderEditor() {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
             .allowMainThreadQueries().build()

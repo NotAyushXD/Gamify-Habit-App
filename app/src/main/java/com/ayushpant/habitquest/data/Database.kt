@@ -85,6 +85,13 @@ interface SessionDao {
     @Query("SELECT MAX(day) FROM session WHERE status = 'CONFIRMED' AND day < :day")
     fun observeLastConfirmedDayBefore(day: LocalDate): Flow<LocalDate?>
 
+    /** Confirmed sessions on [day]: each one is a spar ticket (5h). */
+    @Query("SELECT COUNT(*) FROM session WHERE status = 'CONFIRMED' AND day = :day")
+    fun observeConfirmedCountOn(day: LocalDate): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM session WHERE status = 'CONFIRMED' AND day = :day")
+    suspend fun confirmedCountOn(day: LocalDate): Int
+
     /** Confirmed points per habit and day, for paying coins (one source per habit per day). */
     @Query("SELECT habit_id AS habitId, day, SUM(points) AS points FROM session WHERE status = 'CONFIRMED' GROUP BY habit_id, day")
     suspend fun pointsByHabitDay(): List<HabitDayPoints>
@@ -392,6 +399,25 @@ interface RewardDao {
     suspend fun getRedemptions(): List<RewardRedemption>
 }
 
+@Dao
+interface SparDao {
+    @Insert
+    suspend fun insert(spar: Spar): Long
+
+    @Update
+    suspend fun update(spar: Spar)
+
+    @Query("SELECT * FROM spar WHERE id = :id")
+    suspend fun get(id: Long): Spar?
+
+    /** Spars started on [day]: the tickets already used. */
+    @Query("SELECT COUNT(*) FROM spar WHERE day = :day")
+    suspend fun countOn(day: LocalDate): Int
+
+    @Query("SELECT COUNT(*) FROM spar WHERE day = :day")
+    fun observeCountOn(day: LocalDate): Flow<Int>
+}
+
 /** Tells Room how to store java.time types. Dates and times are stored as ISO text, e.g. "2026-11-04". */
 class Converters {
     @TypeConverter fun dateToText(d: LocalDate?): String? = d?.toString()
@@ -401,15 +427,15 @@ class Converters {
 }
 
 @Database(
-    version = 9,
+    version = 10,
     entities = [
         Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
         Settings::class, ReminderLog::class, HabitSkip::class, Promise::class, Zone::class,
         CoinLedger::class, CoinCredit::class, Egg::class, OwnedCreature::class, BondEvent::class,
-        PersonalReward::class, RewardRedemption::class,
+        PersonalReward::class, RewardRedemption::class, Spar::class,
     ],
     // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -430,6 +456,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun eggs(): EggDao
     abstract fun creatures(): CreatureDao
     abstract fun rewards(): RewardDao
+    abstract fun spars(): SparDao
 
     companion object {
         fun create(context: Context): AppDatabase =

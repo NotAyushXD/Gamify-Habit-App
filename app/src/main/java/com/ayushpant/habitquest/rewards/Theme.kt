@@ -37,6 +37,12 @@ data class ThemeText(
     val welcomeBack: (name: String) -> String,
     val chooseCompanion: String,
     val notYet: String,
+    /** Step 5h: the three move names per dimension, in slot order: push, big move, rest. */
+    val sparMoves: Map<Dimension, List<String>>,
+    val sparIntro: (opponent: String) -> String,
+    val sparWon: (opponent: String) -> String,
+    val sparLost: (mine: String) -> String,
+    val sparDraw: String,
 )
 
 data class Theme(val id: String, val name: String, val text: ThemeText, val creatures: List<CreatureDef>) {
@@ -66,6 +72,15 @@ object Themes {
             welcomeBack = { name -> "Welcome back! $name missed you." },
             chooseCompanion = "Choose",
             notYet = "Not hatched yet",
+            sparMoves = mapOf(
+                Dimension.MIND to listOf("Bright Idea", "Star Riddle", "Deep Breath"),
+                Dimension.BODY to listOf("Quick Dash", "Mighty Hop", "Stretch Out"),
+                Dimension.SOUL to listOf("Gentle Breeze", "Glow Wave", "Warm Hum"),
+            ),
+            sparIntro = { opp -> "$opp wants a friendly spar!" },
+            sparWon = { opp -> "$opp takes a breather and bows. You won!" },
+            sparLost = { mine -> "$mine takes a breather. Good spar! Every session makes $mine stronger." },
+            sparDraw = "A long match and nobody tired out. A draw, and a good one.",
         ),
         // Names chosen by the developer, who reports approval from The Pokémon Company (Nov 10, 2026).
         // 6 per dimension; each evolution line stays in one dimension. Blurbs stay calm and kind (R4, R5).

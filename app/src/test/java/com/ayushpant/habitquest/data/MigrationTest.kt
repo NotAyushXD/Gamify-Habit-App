@@ -231,4 +231,25 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 9 to 10 keeps rewards and coins and adds spars`() = runBlocking {
+        createDatabaseAtVersion(9).apply {
+            execSQL("INSERT INTO coin_ledger (id, time, amount, reason, source_key, mbs_mask) VALUES (1, 1, 50, 'HABIT', 'habit:1:2026-11-05', 0)")
+            execSQL("INSERT INTO personal_reward (id, name, cost, active) VALUES (1, 'A free evening', 500, 1)")
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            assertEquals(50, db.coins().balance())
+            assertEquals("A free evening", db.rewards().getActive().single().name)
+            val day = LocalDate.of(2026, 11, 10)
+            val id = db.spars().insert(Spar(day = day, time = 1, ownedId = 1, opponentId = "charignis", opponentPower = 10))
+            assertEquals(1, db.spars().countOn(day))
+            db.spars().update(db.spars().get(id)!!.copy(result = SparResult.WON))
+            assertEquals(SparResult.WON, db.spars().get(id)!!.result)
+        } finally {
+            db.close()
+        }
+    }
 }

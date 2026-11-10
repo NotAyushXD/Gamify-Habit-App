@@ -712,6 +712,82 @@ class HabitRepositoryTest {
         assertTrue(db.creatures().getOwned(themeId).none { it.creatureId == "pebbit" })
     }
 
+    // ---- Sparring (Step 5h) -----------------------------------------------------------------------
+
+    /** A habit, the first egg, and one creature the user owns (the companion). Returns (habit, owned id). */
+    private fun sparSetup(): Pair<Long, Long> = runBlocking {
+        val habit = newHabit()
+        setTime(monday, 6, 0); repo.closePendingDays()
+        val owned = db.creatures().insert(OwnedCreature(themeId = themeId, creatureId = Themes.CREATURES.creatures.first().id, hatchDay = monday, companion = true))
+        habit to owned
+    }
+
+    @Test
+    fun `no spar without a ticket, one ticket per confirmed session, each used once`() = runBlocking {
+        val (habit, owned) = sparSetup()
+        assertEquals(0, repo.sparTicketsLeft())
+        assertNull(repo.startSpar(owned, "anyone", 10))
+        setTime(monday, 7, 0); repo.tickHabit(habit)
+        assertEquals(1, repo.sparTicketsLeft())
+        assertNotNull(repo.startSpar(owned, "anyone", 10)) // left without finishing: the ticket stays used
+        assertEquals(0, repo.sparTicketsLeft())
+        assertNull(repo.startSpar(owned, "anyone", 10))
+    }
+
+    @Test
+    fun `tickets are for today only`() = runBlocking {
+        val (habit, _) = sparSetup()
+        setTime(monday, 7, 0); repo.tickHabit(habit)
+        assertEquals(1, repo.sparTicketsLeft())
+        setTime(monday.plusDays(1), 6, 0)
+        assertEquals(0, repo.sparTicketsLeft())
+        assertEquals(0, repo.observeSparTickets(monday.plusDays(1)).first())
+    }
+
+    @Test
+    fun `a win pays coins, egg growth and bond, once`() = runBlocking {
+        val (habit, owned) = sparSetup()
+        setTime(monday, 7, 0); repo.tickHabit(habit) // 10 + bonus 10 = 20 coins, 1 bond
+        val coins = today().coins
+        val growth = openEgg().total
+        val id = repo.startSpar(owned, "anyone", 10)!!
+        assertTrue(repo.finishSpar(id, SparResult.WON))
+        val cfg = ScoringConfig.DEFAULT
+        assertEquals(coins + cfg.sparWinCoins, today().coins)
+        assertEquals(growth + cfg.sparWinCoins, openEgg().total)
+        assertEquals(1 + cfg.sparWinBond, today().rewards.companion!!.owned.bond)
+        assertFalse(repo.finishSpar(id, SparResult.WON)) // finishing again pays nothing
+        assertEquals(coins + cfg.sparWinCoins, today().coins)
+    }
+
+    @Test
+    fun `a loss or a draw changes no coins, growth, bond or streak`() = runBlocking {
+        val (habit, owned) = sparSetup()
+        setTime(monday, 7, 0); repo.tickHabit(habit)
+        repo.addSession(habit, monday, LocalTime.of(7, 30), SessionSource.MANUAL) // a second session: a second ticket
+        val coins = today().coins
+        val growth = openEgg().total
+        val bond = today().rewards.companion!!.owned.bond
+        val streak = habitToday(habit).streakDays
+        for (result in listOf(SparResult.LOST, SparResult.DRAW)) {
+            assertTrue(repo.finishSpar(repo.startSpar(owned, "anyone", 10)!!, result))
+        }
+        assertEquals(coins, today().coins)
+        assertEquals(growth, openEgg().total)
+        assertEquals(bond, today().rewards.companion!!.owned.bond)
+        assertEquals(streak, habitToday(habit).streakDays)
+    }
+
+    @Test
+    fun `only the user's own creatures of the current theme can spar`() = runBlocking {
+        val (habit, _) = sparSetup()
+        setTime(monday, 7, 0); repo.tickHabit(habit)
+        val other = db.creatures().insert(OwnedCreature(themeId = "another-theme", creatureId = "x", hatchDay = monday))
+        assertNull(repo.startSpar(other, "anyone", 10))
+        assertNull(repo.startSpar(9999, "anyone", 10))
+        assertEquals(1, repo.sparTicketsLeft()) // nothing was used
+    }
+
     // ---- Personal rewards (Step 5c) ---------------------------------------------------------------
 
     @Test

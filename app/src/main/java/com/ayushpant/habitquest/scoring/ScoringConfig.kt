@@ -111,6 +111,10 @@ data class ScoringConfig(
     val rewardMinCost: Int = 10,
     val rewardMaxCost: Int = 5000,
 
+    // Step 5h: a spar won gives these (a loss gives nothing and takes nothing). Approved Nov 10, 2026.
+    val sparWinCoins: Int = 5,
+    val sparWinBond: Int = 1,
+
     // 6.3 Day close runs at this time and closes the previous day.
     val dayCloseTime: LocalTime = LocalTime.of(0, 5),
 ) {
