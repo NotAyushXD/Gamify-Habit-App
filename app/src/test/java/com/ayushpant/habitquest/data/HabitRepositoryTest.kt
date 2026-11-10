@@ -699,7 +699,7 @@ class HabitRepositoryTest {
         val id = newHabit()
         setTime(monday, 6, 0); repo.closePendingDays()
         // As on a phone with the first draft: an owned "pebbit" companion, from egg 1.
-        db.appState().delete(HabitRepository.KEY_CREATURE_NAMES)
+        db.appState().delete("creature_names")
         val owned = db.creatures().insert(OwnedCreature(themeId = themeId, creatureId = "pebbit", hatchDay = monday, companion = true))
         db.eggs().insert(Egg(themeId = themeId, needed = 100, headStart = 20, startedDay = monday, hatchedDay = monday, creatureId = "pebbit"))
         setTime(monday, 7, 0); repo.tickHabit(id) // 1 bond; the tick also runs the rename
