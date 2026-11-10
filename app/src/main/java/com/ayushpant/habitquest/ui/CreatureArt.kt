@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import com.ayushpant.habitquest.balance.Dimension
 import com.ayushpant.habitquest.rewards.CompanionState
 import com.ayushpant.habitquest.rewards.CreatureDef
@@ -64,7 +65,7 @@ fun EggArt(progress: Float, tint: Color, modifier: Modifier = Modifier) {
             close()
         }
         drawPath(egg, Color(0xFFF3EBDD))
-        androidx.compose.ui.graphics.drawscope.clipPath(egg) {
+        clipPath(egg) {
             drawRect(tint.copy(alpha = 0.75f), topLeft = Offset(0f, h * (1f - progress)), size = Size(w, h * progress))
         }
         drawCircle(Color.White.copy(alpha = 0.6f), radius = w * 0.08f, center = Offset(w * 0.36f, h * 0.3f))
