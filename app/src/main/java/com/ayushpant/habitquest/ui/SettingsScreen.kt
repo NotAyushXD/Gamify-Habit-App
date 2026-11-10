@@ -447,6 +447,9 @@ private fun kindText(kind: ReminderKind) = when (kind) {
     ReminderKind.SNOOZE -> "snooze"
     ReminderKind.CHECKLIST -> "11 PM"
     ReminderKind.PROMISE -> "promise"
+    ReminderKind.EARLY -> "early"
+    ReminderKind.TASK_DUE -> "task due"
+    ReminderKind.TASK_EARLY -> "task early"
 }
 
 private fun resultText(result: ReminderResult) = when (result) {
