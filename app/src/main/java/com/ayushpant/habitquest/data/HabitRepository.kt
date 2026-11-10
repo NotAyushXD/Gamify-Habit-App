@@ -37,6 +37,8 @@ import com.ayushpant.habitquest.rewards.hatchDimension
 import com.ayushpant.habitquest.rewards.pickHatchling
 import com.ayushpant.habitquest.rewards.splitGrowth
 import com.ayushpant.habitquest.rewards.welcomesBack
+import com.ayushpant.habitquest.rewards.REWARD_NAME_MAX
+import com.ayushpant.habitquest.rewards.rewardCostValid
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -898,6 +900,50 @@ class HabitRepository(
         val ok = db.withTransaction {
             if (db.coins().balance() < amount) return@withTransaction false
             db.coins().insert(CoinLedger(time = clock.millis(), amount = -amount, reason = reason, note = note))
+            true
+        }
+        if (ok) onChange()
+        return ok
+    }
+
+    // ---- Personal rewards (Step 5c) ----------------------------------------------------------------
+
+    fun observeRewards(): Flow<List<PersonalReward>> = db.rewards().observeActive()
+
+    fun observeRedemptions(): Flow<List<RewardRedemption>> = db.rewards().observeRedemptions()
+
+    /**
+     * Inserts a reward (id 0) or updates one. Returns false, and saves nothing, when the name is
+     * blank or the cost is outside 10–5000.
+     */
+    suspend fun saveReward(reward: PersonalReward): Boolean {
+        val name = reward.name.trim().take(REWARD_NAME_MAX)
+        if (name.isBlank() || !rewardCostValid(reward.cost, cfg)) return false
+        val clean = reward.copy(name = name)
+        if (clean.id == 0L) db.rewards().insert(clean) else db.rewards().update(clean)
+        onChange()
+        return true
+    }
+
+    /** Hides a reward. Its redeemed history stays. */
+    suspend fun deleteReward(id: Long) {
+        val r = db.rewards().get(id) ?: return
+        db.rewards().update(r.copy(active = false))
+        onChange()
+    }
+
+    /**
+     * "Redeem", after the user confirmed: takes the cost and records the redemption with today's
+     * date. Returns false, and changes nothing, when the balance is too low. Spending is the only
+     * way the balance goes down (R6), and it never lowers the egg's growth.
+     */
+    suspend fun redeemReward(id: Long): Boolean {
+        val r = db.rewards().get(id)?.takeIf { it.active } ?: return false
+        val ok = db.withTransaction {
+            if (db.coins().balance() < r.cost) return@withTransaction false
+            val now = clock.millis()
+            db.coins().insert(CoinLedger(time = now, amount = -r.cost, reason = CoinReason.REWARD, note = r.name))
+            db.rewards().insertRedemption(RewardRedemption(rewardId = r.id, name = r.name, cost = r.cost, time = now, day = today()))
             true
         }
         if (ok) onChange()

@@ -712,6 +712,59 @@ class HabitRepositoryTest {
         assertTrue(db.creatures().getOwned(themeId).none { it.creatureId == "pebbit" })
     }
 
+    // ---- Personal rewards (Step 5c) ---------------------------------------------------------------
+
+    @Test
+    fun `a personal reward needs a name and a cost of 10 to 5000`() = runBlocking {
+        assertFalse(repo.saveReward(PersonalReward(name = "Coffee", cost = 9)))
+        assertFalse(repo.saveReward(PersonalReward(name = "Coffee", cost = 5001)))
+        assertFalse(repo.saveReward(PersonalReward(name = "  ", cost = 100)))
+        assertTrue(repo.saveReward(PersonalReward(name = "  Coffee  ", cost = 10)))
+        assertTrue(repo.saveReward(PersonalReward(name = "Weekend away", cost = 5000)))
+        assertEquals(listOf("Coffee", "Weekend away"), db.rewards().getActive().map { it.name }) // trimmed, cheapest first
+    }
+
+    @Test
+    fun `redeeming takes the cost, records it with the date, and never lowers growth`() = runBlocking {
+        setTime(monday, 10, 0)
+        repo.completeTask(bodyTask()) // 12 coins
+        repo.saveReward(PersonalReward(name = "Sticker", cost = 10))
+        val growth = openEgg().total
+        assertTrue(repo.redeemReward(db.rewards().getActive().single().id))
+        assertEquals(2, today().coins)
+        assertEquals(growth, openEgg().total)
+        val r = db.rewards().getRedemptions().single()
+        assertEquals("Sticker" to 10, r.name to r.cost)
+        assertEquals(monday, r.day)
+        assertEquals(CoinReason.REWARD, db.coins().observeRecent(1).first().single().reason)
+    }
+
+    @Test
+    fun `with too few coins redeeming changes nothing`() = runBlocking {
+        setTime(monday, 10, 0)
+        repo.completeTask(bodyTask()) // 12 coins
+        repo.saveReward(PersonalReward(name = "A coffee outside", cost = 150))
+        assertFalse(repo.redeemReward(db.rewards().getActive().single().id))
+        assertEquals(12, today().coins)
+        assertTrue(db.rewards().getRedemptions().isEmpty())
+    }
+
+    @Test
+    fun `editing or deleting a reward keeps the redeemed history`() = runBlocking {
+        setTime(monday, 10, 0)
+        repo.completeTask(bodyTask()) // 12 coins
+        repo.saveReward(PersonalReward(name = "Sticker", cost = 10))
+        val reward = db.rewards().getActive().single()
+        repo.redeemReward(reward.id)
+        repo.saveReward(reward.copy(name = "Big sticker", cost = 40))
+        repo.deleteReward(reward.id)
+        assertTrue(db.rewards().getActive().isEmpty())
+        assertFalse(repo.redeemReward(reward.id)) // a deleted reward cannot be redeemed
+        val r = db.rewards().getRedemptions().single()
+        assertEquals("Sticker" to 10, r.name to r.cost)
+        assertEquals(2, today().coins)
+    }
+
     @Test
     fun `each confirmed session is 1 bond for the companion`() = runBlocking {
         val id = newHabit()

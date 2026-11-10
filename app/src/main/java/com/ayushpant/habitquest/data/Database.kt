@@ -364,6 +364,34 @@ interface CreatureDao {
     suspend fun renameCreature(from: String, to: String)
 }
 
+@Dao
+interface RewardDao {
+    @Query("SELECT * FROM personal_reward WHERE active = 1 ORDER BY cost, id")
+    fun observeActive(): Flow<List<PersonalReward>>
+
+    @Query("SELECT * FROM personal_reward WHERE active = 1 ORDER BY cost, id")
+    suspend fun getActive(): List<PersonalReward>
+
+    @Query("SELECT * FROM personal_reward WHERE id = :id")
+    suspend fun get(id: Long): PersonalReward?
+
+    @Insert
+    suspend fun insert(reward: PersonalReward): Long
+
+    @Update
+    suspend fun update(reward: PersonalReward)
+
+    @Insert
+    suspend fun insertRedemption(row: RewardRedemption): Long
+
+    /** Newest first, for the "Redeemed" list. */
+    @Query("SELECT * FROM reward_redemption ORDER BY time DESC, id DESC")
+    fun observeRedemptions(): Flow<List<RewardRedemption>>
+
+    @Query("SELECT * FROM reward_redemption ORDER BY time DESC, id DESC")
+    suspend fun getRedemptions(): List<RewardRedemption>
+}
+
 /** Tells Room how to store java.time types. Dates and times are stored as ISO text, e.g. "2026-11-04". */
 class Converters {
     @TypeConverter fun dateToText(d: LocalDate?): String? = d?.toString()
@@ -373,14 +401,15 @@ class Converters {
 }
 
 @Database(
-    version = 8,
+    version = 9,
     entities = [
         Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
         Settings::class, ReminderLog::class, HabitSkip::class, Promise::class, Zone::class,
         CoinLedger::class, CoinCredit::class, Egg::class, OwnedCreature::class, BondEvent::class,
+        PersonalReward::class, RewardRedemption::class,
     ],
     // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -400,6 +429,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun coins(): CoinDao
     abstract fun eggs(): EggDao
     abstract fun creatures(): CreatureDao
+    abstract fun rewards(): RewardDao
 
     companion object {
         fun create(context: Context): AppDatabase =

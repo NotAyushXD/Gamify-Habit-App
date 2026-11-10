@@ -303,3 +303,30 @@ data class BondEvent(
     @PrimaryKey @ColumnInfo(name = "session_id") val sessionId: Long,
     @ColumnInfo(name = "owned_id") val ownedId: Long,
 )
+
+// ---- Added in database version 9 (Step 5c: personal rewards) ------------------------------------
+
+/** A real-life treat the user defines and buys with coins. Deleting only hides it ([active] = false). */
+@Entity(tableName = "personal_reward")
+data class PersonalReward(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    /** Coins, between ScoringConfig.rewardMinCost and rewardMaxCost. */
+    val cost: Int,
+    val active: Boolean = true,
+)
+
+/**
+ * One redeemed reward. The name and cost are copied at that moment, so a later edit or delete of
+ * the reward never changes the history.
+ */
+@Entity(tableName = "reward_redemption", indices = [Index("time")])
+data class RewardRedemption(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "reward_id") val rewardId: Long,
+    val name: String,
+    val cost: Int,
+    /** Epoch milliseconds. */
+    val time: Long,
+    val day: LocalDate,
+)

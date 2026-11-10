@@ -213,4 +213,22 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 8 to 9 keeps coins and adds personal rewards`() = runBlocking {
+        createDatabaseAtVersion(8).apply {
+            execSQL("INSERT INTO coin_ledger (id, time, amount, reason, source_key, mbs_mask) VALUES (1, 1, 200, 'HABIT', 'habit:1:2026-11-05', 0)")
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            assertEquals(200, db.coins().balance())
+            val id = db.rewards().insert(PersonalReward(name = "A coffee outside", cost = 150))
+            db.rewards().insertRedemption(RewardRedemption(rewardId = id, name = "A coffee outside", cost = 150, time = 2, day = LocalDate.of(2026, 11, 10)))
+            assertEquals("A coffee outside", db.rewards().getActive().single().name)
+            assertEquals(1, db.rewards().getRedemptions().size)
+        } finally {
+            db.close()
+        }
+    }
 }

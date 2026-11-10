@@ -159,6 +159,7 @@ fun TodayScreen(
     onEditHabit: (Long) -> Unit,
     onEditTask: (Long) -> Unit,
     onCollection: () -> Unit = {},
+    onRewards: () -> Unit = {},
 ) {
     val data by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -199,7 +200,7 @@ fun TodayScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(bottom = 96.dp), // room for the + button
             ) {
-                item(key = "header") { Header(today, onCollection) }
+                item(key = "header") { Header(today, onCollection, onRewards) }
                 stickyHeader(key = "switch") {
                     Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp, vertical = 8.dp)) {
                         val scheduled = today.habits.count { it.scheduledToday }
@@ -323,7 +324,7 @@ private fun greeting(hour: Int) = when (hour) {
 
 /** The top of Today: greeting, the day's ring with points, level, and one line of encouragement. */
 @Composable
-private fun Header(today: TodayData, onCollection: () -> Unit) {
+private fun Header(today: TodayData, onCollection: () -> Unit, onRewards: () -> Unit) {
     val level = today.level
     val scheduled = today.habits.count { it.scheduledToday }
     val done = today.habits.count { it.scheduledToday && it.isDone }
@@ -333,7 +334,7 @@ private fun Header(today: TodayData, onCollection: () -> Unit) {
                 Text(greeting(LocalTime.now().hour), style = MaterialTheme.typography.headlineSmall)
                 Text(today.day.format(DAY_TITLE), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Pill("🪙 ${today.coins}", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+            Pill("🪙 ${today.coins}", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, Modifier.clickable(onClick = onRewards))
             Spacer(Modifier.width(8.dp))
             Pill("Lv ${level.number} · ${level.title}", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
         }
@@ -394,8 +395,8 @@ private fun DayRing(done: Int, total: Int) {
 }
 
 @Composable
-private fun Pill(text: String, background: Color, content: Color) {
-    Box(Modifier.clip(RoundedCornerShape(50)).background(background).padding(horizontal = 12.dp, vertical = 6.dp)) {
+private fun Pill(text: String, background: Color, content: Color, modifier: Modifier = Modifier) {
+    Box(Modifier.clip(RoundedCornerShape(50)).then(modifier).background(background).padding(horizontal = 12.dp, vertical = 6.dp)) {
         Text(text, style = MaterialTheme.typography.labelLarge, color = content)
     }
 }

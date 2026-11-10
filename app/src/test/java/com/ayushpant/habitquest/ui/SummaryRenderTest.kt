@@ -142,6 +142,27 @@ class SummaryRenderTest {
     }
 
     @Test
+    fun renderRewards() {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries().build()
+        val repo = HabitRepository(db)
+        val out = File("build/render").apply { mkdirs() }
+        compose.setContent { HabitQuestTheme { RewardsScreen(repo, onBack = {}) } }
+        compose.mainClock.advanceTimeBy(1_000)
+        save(out, "rewards-empty.png") // the three ideas
+        runBlocking {
+            val t = repo.saveTask(Task(name = "Passport", dueDate = repo.today(), basePoints = 10, createdDate = repo.today()))
+            repo.completeTask(t) // 12 coins
+            repo.saveReward(com.ayushpant.habitquest.data.PersonalReward(name = "Sticker", cost = 10))
+            repo.saveReward(com.ayushpant.habitquest.data.PersonalReward(name = "A coffee outside", cost = 150))
+            repo.redeemReward(db.rewards().getActive().first().id)
+        }
+        compose.mainClock.advanceTimeBy(1_000) // the screen follows the database
+        save(out, "rewards.png") // one to redeem, one with "more needed", and the redeemed list
+        db.close()
+    }
+
+    @Test
     fun renderEditor() {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
             .allowMainThreadQueries().build()
