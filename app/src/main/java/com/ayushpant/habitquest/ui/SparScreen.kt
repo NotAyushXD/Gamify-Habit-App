@@ -1,5 +1,7 @@
 package com.ayushpant.habitquest.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -50,6 +52,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
@@ -116,6 +121,7 @@ fun SparScreen(repo: HabitRepository, onBack: () -> Unit) {
     var flash by remember { mutableStateOf<Boolean?>(null) } // true: my creature blinks, false: the wild one
     var paidResult by remember { mutableStateOf<SparResult?>(null) }
     var finished by remember { mutableStateOf(false) }
+    var fx by remember { mutableStateOf<Fx?>(null) } // the attack animation running now
 
     /** Shows one message with the typewriter, and waits long enough to read it. */
     suspend fun say(text: String) {
@@ -163,19 +169,30 @@ fun SparScreen(repo: HabitRepository, onBack: () -> Unit) {
                     },
                 )
                 !finished -> Battle(
-                    m, theme, line, busy, flash,
+                    m, theme, line, busy, flash, fx,
                     onMove = { slot ->
                         busy = true
                         scope.launch {
                             val turn = playTurn(m.state, slot, rng)
                             var running = m.state
                             for (e in turn.events) {
-                                for (text in linesFor(e, running, theme)) say(text)
+                                val texts = linesFor(e, running, theme)
+                                say(texts.first()) // "CHARIGNIS used EMBER!"
+                                val attacker = if (e.byMe) running.me else running.them
+                                val style = fxStyleFor(theme.moveNames(attacker.id, attacker.dimension)[e.slot], e.kind)
+                                if (!(e.kind == MoveKind.REST && !e.hit)) { // a failed rest shows nothing
+                                    val anim = Animatable(0f)
+                                    anim.animateTo(1f, tween(if (style == FxStyle.HEAL) 800 else 900, easing = LinearEasing)) {
+                                        fx = Fx(style, e.byMe, e.hit, value)
+                                    }
+                                    fx = null
+                                }
                                 running = applyEvent(running, e)
+                                match = m.copy(state = running) // the HP bar moves now
                                 if (e.hit && e.kind != MoveKind.REST) {
                                     repeat(3) { flash = !e.byMe; delay(90); flash = null; delay(90) }
                                 }
-                                match = m.copy(state = running)
+                                for (text in texts.drop(1)) say(text) // "It's super effective!", "…missed!"
                             }
                             match = m.copy(state = turn.state)
                             val result = when (turn.state.outcome) {
@@ -353,26 +370,39 @@ private fun MessageBox(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ColumnScope.Battle(
-    m: Match, theme: Theme, line: String, busy: Boolean, flash: Boolean?,
+    m: Match, theme: Theme, line: String, busy: Boolean, flash: Boolean?, fx: Fx?,
     onMove: (Int) -> Unit, onRun: () -> Unit,
 ) {
     val s = m.state
-    Column(
+    // Where the two sprites are, so the attack animation can fly between them.
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    var mine by remember { mutableStateOf(Offset.Zero) }
+    var theirs by remember { mutableStateOf(Offset.Zero) }
+    Box(
         Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(12.dp)).background(Paper)
-            .border(3.dp, Ink, RoundedCornerShape(12.dp)).padding(12.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
+            .border(3.dp, Ink, RoundedCornerShape(12.dp))
+            .onGloballyPositioned { origin = it.positionInRoot() },
     ) {
-        // The wild creature: info box top left, on its ground top right
-        Row(verticalAlignment = Alignment.Top) {
-            InfoBox(s.them, numbers = false, rightSide = false, modifier = Modifier.weight(1f).padding(top = 6.dp))
-            OnPlatform(m.opponent, 1, 118, blink = flash == false)
+        Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            // The wild creature: info box top left, on its ground top right
+            Row(verticalAlignment = Alignment.Top) {
+                InfoBox(s.them, numbers = false, rightSide = false, modifier = Modifier.weight(1f).padding(top = 6.dp))
+                OnPlatform(m.opponent, 1, 118, blink = flash == false, modifier = Modifier.onGloballyPositioned { theirs = it.boundsInRoot().center })
+            }
+            // Your creature: on its ground bottom left, info box bottom right
+            Row(verticalAlignment = Alignment.Bottom) {
+                OnPlatform(m.mine.def, m.stage, 136, blink = flash == true, modifier = Modifier.onGloballyPositioned { mine = it.boundsInRoot().center })
+                InfoBox(s.me, numbers = true, rightSide = true, modifier = Modifier.weight(1f).padding(bottom = 6.dp))
+            }
+            MessageBox(line)
         }
-        // Your creature: on its ground bottom left, info box bottom right
-        Row(verticalAlignment = Alignment.Bottom) {
-            OnPlatform(m.mine.def, m.stage, 136, blink = flash == true)
-            InfoBox(s.me, numbers = true, rightSide = true, modifier = Modifier.weight(1f).padding(bottom = 6.dp))
+        if (fx != null) {
+            Canvas(Modifier.matchParentSize()) {
+                val me = mine - origin
+                val them = theirs - origin
+                drawFx(fx, from = if (fx.fromMe) me else them, to = if (fx.fromMe) them else me, unit = 120.dp.toPx())
+            }
         }
-        MessageBox(line)
     }
     // The move menu: three moves and RUN, in boxes
     val names = theme.moveNames(s.me.id, s.me.dimension)

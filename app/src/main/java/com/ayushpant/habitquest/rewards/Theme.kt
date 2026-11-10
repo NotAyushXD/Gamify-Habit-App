@@ -51,9 +51,13 @@ data class ThemeText(
     val sparMissed: (who: String) -> String,
     val sparFailed: String,
     val sparRun: String,
+    /** The first egg hatches into a starter of the user's choice. */
+    val starterTitle: String,
+    val starterHint: String,
 )
 
-data class Theme(val id: String, val name: String, val text: ThemeText, val creatures: List<CreatureDef>) {
+/** [starters]: the creature ids the user chooses from when the first egg hatches. */
+data class Theme(val id: String, val name: String, val text: ThemeText, val creatures: List<CreatureDef>, val starters: List<String> = emptyList()) {
     fun creature(id: String): CreatureDef? = creatures.firstOrNull { it.id == id }
 
     /** A creature's three move names (push, big move, rest) for the spar screen. */
@@ -121,6 +125,8 @@ object Themes {
             sparMissed = { who -> "$who's attack missed!" },
             sparFailed = "But it failed!",
             sparRun = "Got away safely!",
+            starterTitle = "🥚 Your egg hatched! Choose your starter:",
+            starterHint = "Your starter becomes your companion. More creatures hatch from the next eggs.",
         ),
         // Names chosen by the developer, who reports approval from The Pokémon Company (Nov 10, 2026).
         // 6 per dimension; each evolution line stays in one dimension. Blurbs stay calm and kind (R4, R5).
@@ -147,6 +153,8 @@ object Themes {
             CreatureDef("snorlaura", "Snorlaura", Dimension.SOUL, "A big sleepy friend that glows softly while it rests."),
             CreatureDef("dragonairis", "Dragonairis", Dimension.SOUL, "A graceful serpent that leaves a trail of rainbow light."),
         ),
+        // The first form of the leaf, fire and water lines (developer's choice, Nov 10, 2026).
+        starters = listOf("bulbavulpis", "charignis", "squirtgorgon"),
     )
 
     val all: List<Theme> = listOf(CREATURES)

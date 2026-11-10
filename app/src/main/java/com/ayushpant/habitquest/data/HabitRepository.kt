@@ -37,6 +37,7 @@ import com.ayushpant.habitquest.rewards.hatchDimension
 import com.ayushpant.habitquest.rewards.pickHatchling
 import com.ayushpant.habitquest.rewards.splitGrowth
 import com.ayushpant.habitquest.rewards.welcomesBack
+import com.ayushpant.habitquest.rewards.starterChoices
 import com.ayushpant.habitquest.rewards.REWARD_NAME_MAX
 import com.ayushpant.habitquest.rewards.rewardCostValid
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -104,10 +105,15 @@ data class RewardsView(
     val egg: EggView? = null,
     val owned: List<OwnedView> = emptyList(),
     val companion: CompanionView? = null,
+    /** Set while the first egg has hatched and the user still picks a starter (or gets one as a gift). */
+    val starterChoices: List<CreatureDef> = emptyList(),
 )
 
 /** The reward rows before today's state is known (the companion's mood needs today's sessions). */
-private data class RewardsRaw(val theme: Theme, val egg: Egg?, val hatched: Int, val owned: List<OwnedCreature>, val bonds: Map<Long, Int>, val lastDoneBefore: LocalDate?)
+private data class RewardsRaw(
+    val theme: Theme, val egg: Egg?, val hatched: Int, val owned: List<OwnedCreature>, val bonds: Map<Long, Int>, val lastDoneBefore: LocalDate?,
+    val starterPending: Boolean = false,
+)
 
 data class TodayData(
     val day: LocalDate,
@@ -260,7 +266,10 @@ class HabitRepository(
                 )
             }
             val egg = raw.egg?.let { EggView(raw.hatched + 1, it.needed, it.total, it.growthMind, it.growthBody, it.growthSoul) }
-            data.copy(rewards = RewardsView(raw.theme, egg, owned, companion))
+            val starters = if (raw.starterPending) {
+                starterChoices(raw.theme.starters, raw.owned.map { it.creatureId }.toSet()).mapNotNull { raw.theme.creature(it) }
+            } else emptyList()
+            data.copy(rewards = RewardsView(raw.theme, egg, owned, companion, starters))
         }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -273,6 +282,7 @@ class HabitRepository(
                 db.creatures().observeBonds(),
                 db.sessions().observeLastConfirmedDayBefore(day),
             ) { egg, hatched, owned, bonds, last -> RewardsRaw(theme, egg, hatched, owned, bonds.associate { it.ownedId to it.bond }, last) }
+                .combine(db.appState().observe(starterPendingKey(theme.id))) { raw, pending -> raw.copy(starterPending = pending != null) }
         }
 
     suspend fun getHabit(id: Long): Habit? = db.habits().get(id)
@@ -766,6 +776,7 @@ class HabitRepository(
         applyRuleChanges()
         backfillDimensions()
         renameOldCreatures()
+        offerStarterGift()
         db.withTransaction { settleCoins() }
         db.signals().deleteOlderThan(clock.millis() - Duration.ofDays(SIGNAL_LOG_DAYS).toMillis())
         return closed
@@ -866,18 +877,61 @@ class HabitRepository(
      * does the creature.
      */
     private suspend fun shrinkEgg(key: String, amount: Int, mask: Int) {
-        val egg = db.eggs().getOpen(currentTheme().id) ?: return
-        val mark = db.appState().get(eggMarkKey(egg.id))?.toLongOrNull() ?: return
-        val back = minOf(amount, db.coins().netAfter(key, mark))
-        if (back <= 0) return
-        val split = splitGrowth(back, mask)
-        db.eggs().update(
-            egg.copy(
-                growthMind = (egg.growthMind - (split[Dimension.MIND] ?: 0)).coerceAtLeast(0),
-                growthBody = (egg.growthBody - (split[Dimension.BODY] ?: 0)).coerceAtLeast(0),
-                growthSoul = (egg.growthSoul - (split[Dimension.SOUL] ?: 0)).coerceAtLeast(0),
-            )
+        val theme = currentTheme()
+        val open = db.eggs().getOpen(theme.id) ?: return
+        val openMark = db.appState().get(eggMarkKey(open.id))?.toLongOrNull() ?: return
+        val inOpen = minOf(amount, db.coins().netAfter(key, openMark))
+        if (inOpen > 0) db.eggs().update(open.minus(splitGrowth(inOpen, mask)))
+        val left = amount - inOpen.coerceAtLeast(0)
+        if (left <= 0) return
+        // The rest went into the egg before. Same day only (developer decision, Nov 10, 2026): if that
+        // egg hatched today and now falls short, the creature goes back into the egg. From the next
+        // day on a hatched creature always stays.
+        val last = db.eggs().lastHatched(theme.id)?.takeIf { it.hatchedDay == today() } ?: return
+        val lastMark = db.appState().get(eggMarkKey(last.id))?.toLongOrNull() ?: return
+        val inLast = minOf(left, db.coins().netBetween(key, lastMark, openMark))
+        if (inLast <= 0) return
+        val shrunk = last.minus(splitGrowth(inLast, mask))
+        val pendingStarter = db.appState().get(starterPendingKey(theme.id)) == last.id.toString()
+        if (shrunk.total >= shrunk.needed || (shrunk.creatureId == null && !pendingStarter)) {
+            db.eggs().update(shrunk) // still full, or a full-collection egg (its coins stay): it stays hatched
+            return
+        }
+        unhatch(theme, shrunk, db.eggs().getOpen(theme.id) ?: open)
+    }
+
+    private fun Egg.minus(split: Map<Dimension, Int>) = copy(
+        growthMind = (growthMind - (split[Dimension.MIND] ?: 0)).coerceAtLeast(0),
+        growthBody = (growthBody - (split[Dimension.BODY] ?: 0)).coerceAtLeast(0),
+        growthSoul = (growthSoul - (split[Dimension.SOUL] ?: 0)).coerceAtLeast(0),
+    )
+
+    /**
+     * Puts today's hatch back: the creature (or the starter choice) goes, [egg] is open again, and
+     * the growth of the egg that started after it moves back into it. Bond rows stay (they belong to
+     * past sessions). If later coins fill it again, it hatches again.
+     */
+    private suspend fun unhatch(theme: Theme, egg: Egg, next: Egg) {
+        egg.creatureId?.let { id ->
+            val owned = db.creatures().getOwned(theme.id).lastOrNull { it.creatureId == id && it.hatchDay == today() }
+            if (owned != null) {
+                db.creatures().delete(owned.id)
+                if (owned.companion) db.creatures().getOwned(theme.id).firstOrNull()?.let { db.creatures().setCompanion(theme.id, it.id) }
+                if (db.appState().get(starterChosenKey(theme.id)) == id) db.appState().delete(starterChosenKey(theme.id))
+            }
+        }
+        if (db.appState().get(starterPendingKey(theme.id)) == egg.id.toString()) db.appState().delete(starterPendingKey(theme.id))
+        val reopened = egg.copy(
+            hatchedDay = null, creatureId = null,
+            growthMind = egg.growthMind + next.growthMind, growthBody = egg.growthBody + next.growthBody, growthSoul = egg.growthSoul + next.growthSoul,
         )
+        if (next.id != egg.id) {
+            db.eggs().delete(next.id)
+            db.appState().delete(eggMarkKey(next.id))
+        }
+        db.eggs().update(reopened)
+        logSignal(SignalKind.TASK, "unhatch ${egg.id}")
+        hatchWhileFull(theme, reopened)
     }
 
     private suspend fun credit(key: String, points: Int, reason: CoinReason, mbsMask: Int, note: String?, recordOnly: Boolean) {
@@ -1015,10 +1069,16 @@ class HabitRepository(
             growthSoul = egg.growthSoul + (split[Dimension.SOUL] ?: 0),
         )
         db.eggs().update(egg)
+        hatchWhileFull(theme, egg)
+    }
+
+    /** Hatches [start] while it is full; a new egg starts at once, and growth above the target carries over. */
+    private suspend fun hatchWhileFull(theme: Theme, start: Egg) {
+        var egg = start
         while (egg.total >= egg.needed) {
             val surplus = egg.total - egg.needed
             hatch(theme, egg)
-            egg = newEgg(theme, surplus) // a new egg starts at once; growth above the target carries over
+            egg = newEgg(theme, surplus)
         }
     }
 
@@ -1031,9 +1091,21 @@ class HabitRepository(
         return egg.copy(id = id)
     }
 
-    /** The egg is full: a creature the user does not have joins, or coins when all are owned. */
+    /**
+     * The egg is full. The first egg of a theme hatches into a starter the user chooses (while one is
+     * free and none was chosen yet). Later eggs: a creature the user does not have, or coins when all are owned.
+     */
     private suspend fun hatch(theme: Theme, egg: Egg) {
         val owned = db.creatures().getOwned(theme.id)
+        val firstEgg = db.eggs().countHatched(theme.id) == 0
+        if (firstEgg && db.appState().get(starterChosenKey(theme.id)) == null &&
+            starterChoices(theme.starters, owned.map { it.creatureId }.toSet()).isNotEmpty()
+        ) {
+            db.eggs().update(egg.copy(hatchedDay = today()))
+            db.appState().put(AppState(starterPendingKey(theme.id), egg.id.toString()))
+            logSignal(SignalKind.TASK, "hatch: starter choice")
+            return
+        }
         val counts = Dimension.entries.associateWith { d -> owned.count { theme.creature(it.creatureId)?.dimension == d } }
         val growth = mapOf(Dimension.MIND to egg.growthMind, Dimension.BODY to egg.growthBody, Dimension.SOUL to egg.growthSoul)
         val def = pickHatchling(hatchDimension(growth, counts), owned.map { it.creatureId }.toSet(), theme.creatures)
@@ -1045,6 +1117,51 @@ class HabitRepository(
         db.eggs().update(egg.copy(hatchedDay = today(), creatureId = def?.id))
         logSignal(SignalKind.TASK, "hatch ${def?.id ?: "collection complete"}")
     }
+
+    /**
+     * The user picks a starter (from [RewardsView.starterChoices]). It joins as the companion.
+     * Returns false when no choice is open or [creatureId] is not one of the choices.
+     */
+    suspend fun chooseStarter(creatureId: String): Boolean {
+        val ok = db.withTransaction {
+            val theme = currentTheme()
+            val pending = db.appState().get(starterPendingKey(theme.id))?.toLongOrNull() ?: return@withTransaction false
+            val owned = db.creatures().getOwned(theme.id)
+            if (creatureId !in starterChoices(theme.starters, owned.map { it.creatureId }.toSet())) return@withTransaction false
+            val id = db.creatures().insert(OwnedCreature(themeId = theme.id, creatureId = creatureId, hatchDay = today()))
+            db.creatures().setCompanion(theme.id, id)
+            if (pending > 0) db.eggs().get(pending)?.let { db.eggs().update(it.copy(creatureId = creatureId)) }
+            db.appState().delete(starterPendingKey(theme.id))
+            db.appState().put(AppState(starterChosenKey(theme.id), creatureId))
+            logSignal(SignalKind.TASK, "starter $creatureId")
+            true
+        }
+        if (ok) onChange()
+        return ok
+    }
+
+    /**
+     * Starters came after some users had hatched their first egg: they get the choice once, as a
+     * gift (pending id 0), and keep what they have. Runs once per theme.
+     */
+    private suspend fun offerStarterGift() {
+        val theme = currentTheme()
+        val offeredKey = KEY_STARTER_GIFT_PREFIX + theme.id
+        if (db.appState().get(offeredKey) != null) return
+        db.withTransaction {
+            val owned = db.creatures().getOwned(theme.id)
+            if (owned.isEmpty()) return@withTransaction // a new user: the first egg brings the choice
+            if (db.appState().get(starterChosenKey(theme.id)) == null && db.appState().get(starterPendingKey(theme.id)) == null &&
+                starterChoices(theme.starters, owned.map { it.creatureId }.toSet()).isNotEmpty()
+            ) {
+                db.appState().put(AppState(starterPendingKey(theme.id), "0"))
+            }
+            db.appState().put(AppState(offeredKey, "1"))
+        }
+    }
+
+    private fun starterPendingKey(themeId: String) = "$KEY_STARTER_PENDING_PREFIX$themeId"
+    private fun starterChosenKey(themeId: String) = "$KEY_STARTER_CHOSEN_PREFIX$themeId"
 
     /**
      * Each confirmed session is 1 bond for the companion of that moment. A session is counted once;
@@ -1122,6 +1239,12 @@ class HabitRepository(
         const val KEY_EGG_MARK_PREFIX = "egg_mark:"
         /** Set once the first-draft creature ids are renamed (see renameOldCreatures). */
         const val KEY_CREATURE_NAMES = "creature_names"
+        /** + theme id: the first egg's id while the user picks a starter ("0" = the one-time gift). */
+        const val KEY_STARTER_PENDING_PREFIX = "starter_pending:"
+        /** + theme id: the starter the user chose. */
+        const val KEY_STARTER_CHOSEN_PREFIX = "starter_chosen:"
+        /** + theme id: set once the one-time starter gift was checked. */
+        const val KEY_STARTER_GIFT_PREFIX = "starter_gift:"
         /** Raise this when the streak rules change, so stored streaks are walked again. */
         const val RULES_VERSION = 2
         const val SIGNAL_LOG_DAYS = 14L

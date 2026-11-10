@@ -71,3 +71,9 @@ fun companionState(doneToday: Boolean, lastDoneBefore: LocalDate?, today: LocalD
  */
 fun welcomesBack(doneToday: Boolean, lastDoneBefore: LocalDate?, today: LocalDate, cfg: ScoringConfig = ScoringConfig.DEFAULT): Boolean =
     doneToday && lastDoneBefore != null && ChronoUnit.DAYS.between(lastDoneBefore, today) >= cfg.companionRestingDays
+
+/**
+ * The starters the user can still choose from: the theme's starters they do not own yet. The first
+ * egg hatches into this choice (when it is not empty) instead of the growth rule.
+ */
+fun starterChoices(starters: List<String>, ownedIds: Set<String>): List<String> = starters.filter { it !in ownedIds }

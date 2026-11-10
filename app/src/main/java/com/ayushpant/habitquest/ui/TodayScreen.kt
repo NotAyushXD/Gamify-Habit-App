@@ -118,6 +118,7 @@ class TodayViewModel(private val repo: HabitRepository) : ViewModel() {
     fun start(habitId: Long) = viewModelScope.launch { repo.startSession(habitId) }
     fun finish(sessionId: Long) = viewModelScope.launch { repo.finishSession(sessionId) }
     fun tick(habitId: Long) = viewModelScope.launch { repo.tickHabit(habitId) }
+    fun chooseStarter(creatureId: String) = viewModelScope.launch { repo.chooseStarter(creatureId) }
     fun confirmDetected(sessionId: Long) = viewModelScope.launch { repo.confirmSuggestion(sessionId) }
     fun rejectDetected(sessionId: Long) = viewModelScope.launch { repo.rejectSuggestion(sessionId) }
 
@@ -200,7 +201,7 @@ fun TodayScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(bottom = 96.dp), // room for the + button
             ) {
-                item(key = "header") { Header(today, onCollection, onRewards) }
+                item(key = "header") { Header(today, onCollection, onRewards, onChooseStarter = { vm.chooseStarter(it.id) }) }
                 stickyHeader(key = "switch") {
                     Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp, vertical = 8.dp)) {
                         val scheduled = today.habits.count { it.scheduledToday }
@@ -324,7 +325,7 @@ private fun greeting(hour: Int) = when (hour) {
 
 /** The top of Today: greeting, the day's ring with points, level, and one line of encouragement. */
 @Composable
-private fun Header(today: TodayData, onCollection: () -> Unit, onRewards: () -> Unit) {
+private fun Header(today: TodayData, onCollection: () -> Unit, onRewards: () -> Unit, onChooseStarter: (com.ayushpant.habitquest.rewards.CreatureDef) -> Unit) {
     val level = today.level
     val scheduled = today.habits.count { it.scheduledToday }
     val done = today.habits.count { it.scheduledToday && it.isDone }
@@ -363,6 +364,7 @@ private fun Header(today: TodayData, onCollection: () -> Unit, onRewards: () -> 
                 if (today.balance.any { it.planned > 0 }) BalanceRow(today.balance, Modifier.padding(top = 14.dp))
             }
         }
+        StarterCard(today.rewards, onChoose = onChooseStarter)
         CompanionCard(today.rewards, onClick = onCollection)
         val line = today.nudge
         Column {

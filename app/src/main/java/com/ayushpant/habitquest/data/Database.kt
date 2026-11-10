@@ -306,6 +306,10 @@ interface CoinDao {
     @Query("SELECT COALESCE(SUM(amount), 0) FROM coin_ledger WHERE source_key = :key AND id > :afterId")
     suspend fun netAfter(key: String, afterId: Long): Int
 
+    /** Net coins of one source in rows after [afterId], up to and including [upToId]. */
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM coin_ledger WHERE source_key = :key AND id > :afterId AND id <= :upToId")
+    suspend fun netBetween(key: String, afterId: Long, upToId: Long): Int
+
     /** The Mind/Body/Soul mask a source was last paid with. */
     @Query("SELECT mbs_mask FROM coin_ledger WHERE source_key = :key AND amount > 0 ORDER BY id DESC LIMIT 1")
     suspend fun maskOf(key: String): Int?
@@ -330,6 +334,16 @@ interface EggDao {
 
     @Query("UPDATE egg SET creature_id = :to WHERE creature_id = :from")
     suspend fun renameCreature(from: String, to: String)
+
+    @Query("SELECT * FROM egg WHERE id = :id")
+    suspend fun get(id: Long): Egg?
+
+    /** The egg of the theme that hatched last (the one before the open egg). */
+    @Query("SELECT * FROM egg WHERE theme_id = :themeId AND hatched_day IS NOT NULL ORDER BY id DESC LIMIT 1")
+    suspend fun lastHatched(themeId: String): Egg?
+
+    @Query("DELETE FROM egg WHERE id = :id")
+    suspend fun delete(id: Long)
 
     @Update
     suspend fun update(egg: Egg)
@@ -369,6 +383,9 @@ interface CreatureDao {
 
     @Query("UPDATE creature_owned SET creature_id = :to WHERE creature_id = :from")
     suspend fun renameCreature(from: String, to: String)
+
+    @Query("DELETE FROM creature_owned WHERE id = :id")
+    suspend fun delete(id: Long)
 }
 
 @Dao

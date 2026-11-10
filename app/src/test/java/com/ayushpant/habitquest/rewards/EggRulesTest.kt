@@ -99,6 +99,16 @@ class EggRulesTest {
     }
 
     @Test
+    fun `the three starters are one per dimension, and owned ones are not offered again`() {
+        val starters = Themes.CREATURES.starters
+        assertEquals(listOf("bulbavulpis", "charignis", "squirtgorgon"), starters)
+        assertEquals(Dimension.entries.toSet(), starters.map { Themes.CREATURES.creature(it)!!.dimension }.toSet())
+        assertEquals(starters, starterChoices(starters, emptySet()))
+        assertEquals(listOf("bulbavulpis", "squirtgorgon"), starterChoices(starters, setOf("charignis", "geodudonis")))
+        assertTrue(starterChoices(starters, starters.toSet()).isEmpty())
+    }
+
+    @Test
     fun `companion stages start at 30 and 100 bond`() {
         assertEquals(1, companionStage(0))
         assertEquals(1, companionStage(29))

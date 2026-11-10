@@ -10,7 +10,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ayushpant.habitquest.data.RewardsView
 import com.ayushpant.habitquest.rewards.CompanionState
+import com.ayushpant.habitquest.rewards.CreatureDef
 
 /**
  * The companion and the egg on the Today screen (step 5b). Before the first hatch it shows the
@@ -89,5 +98,43 @@ fun EggGrowthLine(mind: Int, body: Int, soul: Int, modifier: Modifier = Modifier
         Text("🧠 $mind", style = MaterialTheme.typography.labelSmall)
         Text("💪 $body", style = MaterialTheme.typography.labelSmall)
         Text("✨ $soul", style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/**
+ * "Your egg hatched! Choose your starter": the three starters, tap one, confirm. Shown on Today and
+ * in the Collection while a choice is open; nothing otherwise.
+ */
+@Composable
+fun StarterCard(rewards: RewardsView, onChoose: (CreatureDef) -> Unit, modifier: Modifier = Modifier) {
+    if (rewards.starterChoices.isEmpty()) return
+    val text = rewards.theme.text
+    var confirm by remember { mutableStateOf<CreatureDef?>(null) }
+    Card(modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(text.starterTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (def in rewards.starterChoices) {
+                    Column(
+                        Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable { confirm = def }.padding(vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CreatureArt(def, 1, CompanionState.ACTIVE, Modifier.size(72.dp))
+                        Text(def.name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                        Text("${def.dimension.emoji} ${def.dimension.label}", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Text(text.starterHint, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    confirm?.let { def ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("Choose ${def.name}?") },
+            text = { Text("${def.blurb} It becomes your companion.") },
+            confirmButton = { Button(onClick = { confirm = null; onChoose(def) }) { Text("Choose ${def.name}") } },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("Look again") } },
+        )
     }
 }

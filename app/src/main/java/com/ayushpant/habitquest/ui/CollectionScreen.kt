@@ -61,6 +61,7 @@ fun CollectionScreen(repo: HabitRepository, onBack: () -> Unit, onSpar: () -> Un
         },
     ) { inner ->
         LazyColumn(Modifier.fillMaxSize().padding(inner), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (rewards.starterChoices.isNotEmpty()) item { StarterCard(rewards, onChoose = { def -> scope.launch { repo.chooseStarter(def.id) } }) }
             item { EggCard(rewards) }
             if (rewards.owned.isNotEmpty()) item {
                 Button(onClick = onSpar, modifier = Modifier.fillMaxWidth()) { Text("⚔️ Spar with your creatures") }

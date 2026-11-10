@@ -67,7 +67,9 @@ fun celebrationFor(before: TodayData, after: TodayData): Celebration? {
     // (No egg before = the very first egg just appeared; that is not a hatch.)
     val eggBefore = before.rewards.egg?.number
     val eggDone = eggBefore != null && (after.rewards.egg?.number ?: 0) > eggBefore
+    val starterNow = after.rewards.starterChoices.isNotEmpty() && before.rewards.starterChoices.isEmpty()
     return when {
+        starterNow -> Celebration(id, "🥚 It hatched!", "Choose your starter! $gain", big = true)
         hatched != null -> Celebration(id, "🥚 It hatched!", after.rewards.theme.text.hatched(hatched.def.name, hatched.def.dimension) + " $gain", big = true)
         eggDone -> Celebration(id, "🎉 It hatched!", "${after.rewards.theme.text.fullCollection} $gain", big = true)
         level.number > before.level.number -> Celebration(id, "Level ${level.number}!", "You are now: ${level.title}", big = true)

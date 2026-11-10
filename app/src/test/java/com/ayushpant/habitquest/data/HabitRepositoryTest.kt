@@ -652,21 +652,49 @@ class HabitRepositoryTest {
     }
 
     @Test
-    fun `a full egg hatches a creature of the strongest dimension, and the next egg starts with its head start`() = runBlocking {
+    fun `the first egg hatches into a starter choice, and the next egg starts with its head start`() = runBlocking {
         setTime(monday, 10, 0)
-        repeat(7) { repo.completeTask(bodyTask("Lift $it")) } // 7 × 12 = 84 Body growth; the egg needed 80 more
-        val owned = db.creatures().getOwned(themeId).single()
-        assertEquals(Dimension.BODY, Themes.CREATURES.creature(owned.creatureId)!!.dimension)
-        assertTrue(owned.companion) // the first creature becomes the companion
+        repeat(7) { repo.completeTask(bodyTask("Lift $it")) } // 7 × 12 = 84 growth; the egg needed 80 more
+        assertTrue(db.creatures().getOwned(themeId).isEmpty()) // no creature yet: the user chooses
+        assertEquals(listOf("bulbavulpis", "charignis", "squirtgorgon"), today().rewards.starterChoices.map { it.id })
         val egg = openEgg()
         assertEquals(300, egg.needed)
         assertEquals(30 + 4, egg.total) // head start + the 4 growth above the first egg's target
         assertEquals(2, today().rewards.egg!!.number)
         assertEquals(84, today().coins) // a hatch takes no coins
+
+        assertFalse(repo.chooseStarter("geodudonis")) // not a starter
+        assertTrue(repo.chooseStarter("charignis"))
+        val owned = db.creatures().getOwned(themeId).single()
+        assertEquals("charignis", owned.creatureId)
+        assertTrue(owned.companion) // the starter becomes the companion
+        assertTrue(today().rewards.starterChoices.isEmpty())
+        assertFalse(repo.chooseStarter("squirtgorgon")) // once only
+    }
+
+    /** A repository whose later eggs need only 60 growth (head start 30), so tests can hatch them quickly. */
+    private fun quickEggs() = HabitRepository(db, clock, ScoringConfig.DEFAULT.copy(eggLaterGrowth = 60))
+
+    /** Hatches the first egg (84 growth) and picks a Soul starter. Returns the repository. */
+    private fun withStarter(r: HabitRepository = quickEggs()) = runBlocking {
+        setTime(monday, 10, 0)
+        repeat(7) { r.completeTask(r.saveTask(Task(name = "Lift $it", dueDate = monday, basePoints = 10, createdDate = monday, mbsMask = maskOf(setOf(Dimension.BODY))))) }
+        assertTrue(r.chooseStarter("bulbavulpis"))
+        r
     }
 
     @Test
-    fun `a hatch is a big celebration`() = runBlocking {
+    fun `a later egg hatches a creature of the dimension that grew it most`() = runBlocking {
+        val r = withStarter() // egg 2: needs 60, starts at 30 + 4
+        repeat(3) { r.completeTask(r.saveTask(Task(name = "Run $it", dueDate = monday, basePoints = 10, createdDate = monday, mbsMask = maskOf(setOf(Dimension.BODY))))) }
+        val hatched = db.creatures().getOwned(themeId).last()
+        assertEquals(Dimension.BODY, Themes.CREATURES.creature(hatched.creatureId)!!.dimension)
+        assertFalse(hatched.companion) // the starter stays the companion
+        assertEquals(3, r.observeToday(r.today()).first().rewards.egg!!.number)
+    }
+
+    @Test
+    fun `a hatch is a big celebration, and the first one asks for the starter`() = runBlocking {
         setTime(monday, 10, 0)
         val tasks = (0 until 7).map { bodyTask("Lift $it") }
         tasks.dropLast(1).forEach { repo.completeTask(it) }
@@ -675,6 +703,67 @@ class HabitRepositoryTest {
         val c = celebrationFor(before, today())!!
         assertTrue(c.big)
         assertEquals("🥚 It hatched!", c.title)
+        assertTrue(c.subtitle.startsWith("Choose your starter!"))
+    }
+
+    @Test
+    fun `undoing the tick that hatched an egg today puts the creature back in the egg`() = runBlocking {
+        val r = withStarter()
+        val ids = (0 until 3).map { r.saveTask(Task(name = "Run $it", dueDate = monday, basePoints = 10, createdDate = monday, mbsMask = maskOf(setOf(Dimension.BODY)))) }
+        ids.forEach { r.completeTask(it) } // 34 + 36 = 70 ≥ 60: egg 2 hatches
+        assertEquals(2, db.creatures().getOwned(themeId).size)
+        val egg2 = db.eggs().lastHatched(themeId)!!
+
+        r.reopenTask(ids.last()) // takes back 12: 58 < 60
+        val owned = db.creatures().getOwned(themeId)
+        assertEquals(listOf("bulbavulpis"), owned.map { it.creatureId })
+        assertTrue(owned.single().companion)
+        val open = db.eggs().getOpen(themeId)!!
+        assertEquals(egg2.id, open.id) // the same egg is open again
+        assertEquals(58, open.total)
+        assertEquals(2, r.observeToday(r.today()).first().rewards.egg!!.number)
+
+        r.completeTask(ids.last()) // ticked again: it hatches again
+        assertEquals(2, db.creatures().getOwned(themeId).size)
+    }
+
+    @Test
+    fun `from the next day a hatched creature stays, whatever is undone`() = runBlocking {
+        val r = withStarter()
+        val ids = (0 until 3).map { r.saveTask(Task(name = "Run $it", dueDate = monday, basePoints = 10, createdDate = monday, mbsMask = maskOf(setOf(Dimension.BODY)))) }
+        ids.forEach { r.completeTask(it) }
+        setTime(monday.plusDays(1), 10, 0)
+        r.reopenTask(ids.last())
+        assertEquals(2, db.creatures().getOwned(themeId).size)
+        assertNotNull(db.eggs().lastHatched(themeId)!!.hatchedDay)
+    }
+
+    @Test
+    fun `undoing on the day of the first hatch takes back the starter choice too`() = runBlocking {
+        setTime(monday, 10, 0)
+        val ids = (0 until 7).map { bodyTask("Lift $it") }
+        ids.forEach { repo.completeTask(it) } // the first egg hatched: choose a starter
+        assertTrue(today().rewards.starterChoices.isNotEmpty())
+        repo.reopenTask(ids.last()) // 92 < 100: back in the egg, no choice
+        assertTrue(today().rewards.starterChoices.isEmpty())
+        assertEquals(1, today().rewards.egg!!.number)
+        assertEquals(92, openEgg().total)
+    }
+
+    @Test
+    fun `a user who hatched before starters existed gets the starter choice once, and keeps their creature`() = runBlocking {
+        newHabit()
+        setTime(monday, 6, 0); repo.closePendingDays()
+        db.creatures().insert(OwnedCreature(themeId = themeId, creatureId = "geodudonis", hatchDay = monday, companion = true))
+        db.appState().delete("starter_gift:$themeId")
+        repo.closePendingDays()
+        assertEquals(3, today().rewards.starterChoices.size)
+        assertTrue(repo.chooseStarter("squirtgorgon"))
+        val owned = db.creatures().getOwned(themeId)
+        assertEquals(setOf("geodudonis", "squirtgorgon"), owned.map { it.creatureId }.toSet())
+        assertEquals("squirtgorgon", owned.single { it.companion }.creatureId)
+        repo.closePendingDays()
+        assertTrue(today().rewards.starterChoices.isEmpty()) // once only
     }
 
     @Test
