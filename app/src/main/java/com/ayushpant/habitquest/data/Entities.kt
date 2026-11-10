@@ -39,6 +39,8 @@ data class Habit(
     @ColumnInfo(name = "mbs_mask", defaultValue = "0") val mbsMask: Int = 0,
     /** "After I [cue], I will [habit]": what the user does right before the habit. Added in version 6. */
     @ColumnInfo(name = "cue_line") val cueLine: String? = null,
+    /** An early reminder this many minutes before the window starts; null = none. Added in version 8. */
+    @ColumnInfo(name = "remind_before") val remindBefore: Int? = null,
 )
 
 @Entity(
@@ -119,6 +121,13 @@ data class Task(
     val active: Boolean = true,
     /** Mind = 1, Body = 2, Soul = 4. Added in database version 4. */
     @ColumnInfo(name = "mbs_mask", defaultValue = "0") val mbsMask: Int = 0,
+    /**
+     * Optional time on the due date: a reminder comes then. Points still count by the date only.
+     * Added in database version 8, with [remindBefore].
+     */
+    @ColumnInfo(name = "due_time") val dueTime: LocalTime? = null,
+    /** An early reminder this many minutes before the due time; null = none. Needs [dueTime]. */
+    @ColumnInfo(name = "remind_before") val remindBefore: Int? = null,
 )
 
 // ---- Added in database version 3 (Step 2: popups) ---------------------------------------------
@@ -134,7 +143,11 @@ data class Settings(
     @ColumnInfo(name = "max_reminders") val maxReminders: Int = 3,
 )
 
-enum class ReminderKind { START, LAST_CHANCE, SNOOZE, CHECKLIST, PROMISE }
+/**
+ * EARLY: a heads-up before a habit's window (the user's choice). TASK_DUE and TASK_EARLY: at a task's
+ * due time, and before it. Stored as text, so new kinds need no schema change.
+ */
+enum class ReminderKind { START, LAST_CHANCE, SNOOZE, CHECKLIST, PROMISE, EARLY, TASK_DUE, TASK_EARLY }
 
 enum class ReminderResult {
     /** A snooze waiting for its time. */
@@ -157,6 +170,8 @@ data class ReminderLog(
     /** Epoch milliseconds. */
     @ColumnInfo(name = "shown_at") val shownAt: Long? = null,
     val result: ReminderResult,
+    /** The task, for TASK_DUE and TASK_EARLY. Added in database version 8. */
+    @ColumnInfo(name = "task_id") val taskId: Long? = null,
 )
 
 /** "Skip today" or "Can't today, I promise tomorrow". The day still counts as a miss. */

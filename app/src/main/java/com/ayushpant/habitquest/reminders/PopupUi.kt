@@ -51,7 +51,21 @@ fun popupTitle(model: PopupModel.Reminder): String = when (model.kind) {
     ReminderKind.PROMISE -> "You promised yourself: ${model.habitName}"
     ReminderKind.LAST_CHANCE -> "${ReminderConfig.DEFAULT.lastChanceMinutes} minutes left for ${model.habitName}"
     ReminderKind.SNOOZE -> "Reminder: ${model.habitName}"
+    ReminderKind.EARLY -> "Coming up at ${model.windowStart.format(HHMM)}: ${model.habitName}"
     else -> "Time for ${model.habitName}"
+}
+
+fun taskPopupTitle(model: PopupModel.TaskReminder): String =
+    if (model.early) "Coming up: ${model.taskName}" else "Due now: ${model.taskName}"
+
+/** "Due today at 18:00", "Due tomorrow at 09:30", "Due Fri 13 Nov at 09:30". */
+fun taskDueLine(model: PopupModel.TaskReminder, today: java.time.LocalDate = java.time.LocalDate.now()): String {
+    val day = when (model.dueDate) {
+        today -> "today"
+        today.plusDays(1) -> "tomorrow"
+        else -> model.dueDate.format(DUE_DAY)
+    }
+    return "Due $day at ${model.dueTime.format(HHMM)}"
 }
 
 /** Moving a popup over other apps: called with the finger's movement in pixels, and when it lets go. */
@@ -99,6 +113,19 @@ fun PopupCard(
                 is PopupModel.Checklist -> ChecklistContent(model, onClose = { act { reminders.close(model.logId) } }, onSave = { h, t ->
                     act { reminders.saveChecklist(model.logId, h, t) }
                 })
+                is PopupModel.TaskReminder -> {
+                    Header(taskPopupTitle(model), onClose = { act { reminders.close(model.logId) } })
+                    Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(taskDueLine(model), style = MaterialTheme.typography.bodyLarge)
+                        Text("Done on the due date: on-time points. The time is only for this reminder.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = { act { reminders.taskDone(model.logId, model.taskId) } }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Done ✓")
+                        }
+                        OutlinedButton(onClick = { act { reminders.close(model.logId) } }, modifier = Modifier.fillMaxWidth()) {
+                            Text("OK, later")
+                        }
+                    }
+                }
                 is PopupModel.ZoneCheck -> {
                     Header("At ${model.zoneName}", onClose = onFinished)
                     Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

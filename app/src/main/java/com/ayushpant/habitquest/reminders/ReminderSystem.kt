@@ -273,6 +273,7 @@ object PopupPresenter {
         val (title, text) = when (model) {
             is PopupModel.Reminder -> popupTitle(model) to "Tap to start, snooze or skip."
             is PopupModel.Checklist -> "11 PM checklist" to "Tick what you did today."
+            is PopupModel.TaskReminder -> taskPopupTitle(model) to "${taskDueLine(model)}. Tap to mark it done."
             is PopupModel.Confirm -> "Did you do ${model.habitName}?" to "${model.minutes} min detected. Tap to confirm."
             is PopupModel.ZoneCheck -> "At ${model.zoneName}" to "Are you doing ${model.habitName} now?"
             PopupModel.Test -> "Test reminder" to "Notifications work. Allow \"Display over other apps\" for popups."

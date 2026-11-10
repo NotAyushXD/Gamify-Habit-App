@@ -182,4 +182,53 @@ class ReminderRepositoryTest {
         assertTrue(!reminders.hasAfterCall())
         assertTrue(reminders.takeAfterCall().isEmpty())
     }
+
+    // ---- Early and task reminders ------------------------------------------------------------------
+
+    @Test
+    fun `a task with a due time pops up then, and Done on the popup completes it on time`() = runBlocking {
+        reminders.saveSettings(Settings(checklistEnabled = false))
+        val id = habits.saveTask(Task(name = "Call bank", dueDate = monday, basePoints = 10, createdDate = monday, dueTime = LocalTime.of(18, 0), remindBefore = 60))
+        setTime(monday, 16, 0)
+        assertEquals(monday.atTime(17, 0), localOf(reminders.nextAlarmMillis()))
+
+        setTime(monday, 17, 1)
+        val early = reminders.popupFor(reminders.takeDue().single()) as PopupModel.TaskReminder
+        assertTrue(early.early)
+        assertEquals("Call bank", early.taskName)
+        reminders.close(early.logId)
+
+        setTime(monday, 18, 0)
+        val due = reminders.popupFor(reminders.takeDue().single()) as PopupModel.TaskReminder
+        assertTrue(!due.early)
+        reminders.taskDone(due.logId, due.taskId)
+        assertEquals(monday, db.tasks().get(id)!!.doneDay)
+        assertEquals(12, db.tasks().get(id)!!.points) // on time: by the date
+        assertTrue(reminders.takeDue().isEmpty())
+    }
+
+    @Test
+    fun `a task done before its time gets no reminder, and a task without a time gets none`() = runBlocking {
+        reminders.saveSettings(Settings(checklistEnabled = false))
+        val timed = habits.saveTask(Task(name = "Call bank", dueDate = monday, basePoints = 10, createdDate = monday, dueTime = LocalTime.of(18, 0)))
+        habits.saveTask(Task(name = "Renew passport", dueDate = monday, basePoints = 10, createdDate = monday))
+        setTime(monday, 10, 0)
+        habits.completeTask(timed)
+        setTime(monday, 18, 5)
+        assertTrue(reminders.takeDue().isEmpty())
+    }
+
+    @Test
+    fun `a habit's early reminder shows before the window with the habit popup`() = runBlocking {
+        reminders.saveSettings(Settings(checklistEnabled = false))
+        val id = habits.saveHabit(
+            Habit(name = "Meditate", windowStart = LocalTime.of(6, 30), windowEnd = LocalTime.of(7, 30), basePoints = 10,
+                creatureLine = CreatureLine.CALM, daysMask = EVERY_DAY_MASK, createdDate = monday, remindBefore = 30)
+        )
+        setTime(monday, 6, 1)
+        val popup = reminders.popupFor(reminders.takeDue().single()) as PopupModel.Reminder
+        assertEquals(ReminderKind.EARLY, popup.kind)
+        assertEquals(id, popup.habitId)
+        assertEquals("Coming up at 06:30: Meditate", popupTitle(popup))
+    }
 }

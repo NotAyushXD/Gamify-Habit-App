@@ -72,6 +72,16 @@ sealed interface PopupModel {
         val tasks: List<TaskLine>,
     ) : PopupModel
 
+    /** A task's reminder: at its due time, or [early] before it. */
+    data class TaskReminder(
+        override val logId: Long,
+        val taskId: Long,
+        val taskName: String,
+        val dueDate: LocalDate,
+        val dueTime: LocalTime,
+        val early: Boolean,
+    ) : PopupModel
+
     /** Spec 5.1: "the habit, the start time, the end time, and the points", for a detected session. */
     data class Confirm(
         val sessionId: Long,
@@ -143,7 +153,10 @@ class ReminderRepository(
     fun observeRecentLog(limit: Int = 20): Flow<List<LogLine>> =
         combine(db.reminders().observeRecent(limit), db.habits().observeAll()) { logs, all ->
             val names = all.associate { it.id to it.name }
-            logs.map { LogLine(toLocal(it.dueAt), it.habitId?.let { id -> names[id] } ?: "Checklist", it.kind, it.result) }
+            logs.map {
+                val what = it.habitId?.let { id -> names[id] } ?: if (it.taskId != null) "Task" else "Checklist"
+                LogLine(toLocal(it.dueAt), what, it.kind, it.result)
+            }
         }
 
     /** All active habits, for "Link a habit" in the Settings guide. */
@@ -194,10 +207,13 @@ class ReminderRepository(
             PlanHabit(
                 it.id, it.windowStart, it.windowEnd, isScheduledOn(it.daysMask, day), it.id in doneIds, it.id in skipped,
                 promiseAt = promises[it.id]?.let { p -> toLocal(p.dueAt).toLocalTime() },
+                remindBefore = it.remindBefore,
             )
         }
-        val logs = db.reminders().getForDay(day).map { PlanLog(it.id, it.habitId, it.kind, toLocal(it.dueAt), it.result) }
-        return planDay(day, planHabits, logs, rules) to rules
+        // Open tasks with a due time get reminders; a task without a time keeps the old behaviour.
+        val planTasks = db.tasks().getOpen().mapNotNull { t -> t.dueTime?.let { PlanTask(t.id, t.dueDate.atTime(it), t.remindBefore) } }
+        val logs = db.reminders().getForDay(day).map { PlanLog(it.id, it.habitId, it.kind, toLocal(it.dueAt), it.result, it.taskId) }
+        return planDay(day, planHabits, logs, rules, planTasks) to rules
     }
 
     /** When the next alarm must ring. After the last popup of the day: just after midnight, to plan the new day. */
@@ -247,7 +263,7 @@ class ReminderRepository(
             db.reminders().update(existing.copy(result = result, shownAt = shownAt))
             existing.id
         } else {
-            db.reminders().insert(ReminderLog(habitId = p.habitId, day = day, kind = p.kind, dueAt = toMillis(p.at), shownAt = shownAt, result = result))
+            db.reminders().insert(ReminderLog(habitId = p.habitId, day = day, kind = p.kind, dueAt = toMillis(p.at), shownAt = shownAt, result = result, taskId = p.taskId))
         }
     }
 
@@ -257,6 +273,10 @@ class ReminderRepository(
         if (logId == PopupModel.Test.logId) return PopupModel.Test
         val log = db.reminders().get(logId) ?: return null
         if (log.kind == ReminderKind.CHECKLIST) return checklistModel(logId)
+        log.taskId?.let { taskId ->
+            val t = db.tasks().get(taskId)?.takeIf { it.active && it.doneDay == null } ?: return null // done meanwhile: no popup
+            return PopupModel.TaskReminder(logId, t.id, t.name, t.dueDate, t.dueTime ?: toLocal(log.dueAt).toLocalTime(), log.kind == ReminderKind.TASK_EARLY)
+        }
         val habit = db.habits().get(log.habitId ?: return null) ?: return null
         val promised = db.skips().getForDay(log.day.minusDays(1)).any { it.habitId == habit.id && it.promised }
         val withTasks = db.appState().get(KEY_TASKS_POPUP + log.day) == logId.toString()
@@ -313,6 +333,12 @@ class ReminderRepository(
     /** "Already done": the user confirms it now. */
     suspend fun done(logId: Long, habitId: Long) {
         habits.tickHabit(habitId)
+        resolve(logId, ReminderResult.DONE)
+    }
+
+    /** "Done" on a task reminder: the task is completed now (the tap is the user's action). */
+    suspend fun taskDone(logId: Long, taskId: Long) {
+        habits.completeTask(taskId)
         resolve(logId, ReminderResult.DONE)
     }
 

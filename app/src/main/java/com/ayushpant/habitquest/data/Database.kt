@@ -373,14 +373,14 @@ class Converters {
 }
 
 @Database(
-    version = 7,
+    version = 8,
     entities = [
         Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
         Settings::class, ReminderLog::class, HabitSkip::class, Promise::class, Zone::class,
         CoinLedger::class, CoinCredit::class, Egg::class, OwnedCreature::class, BondEvent::class,
     ],
     // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

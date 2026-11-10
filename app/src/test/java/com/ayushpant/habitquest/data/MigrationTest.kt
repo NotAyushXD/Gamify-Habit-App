@@ -185,4 +185,32 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 7 to 8 keeps habits, tasks and reminders and adds due times and early reminders`() = runBlocking {
+        createDatabaseAtVersion(7).apply {
+            execSQL(
+                "INSERT INTO habit (id, name, type, window_start, window_end, base_points, creature_line, days_mask, created_date, active, mbs_mask) " +
+                    "VALUES (1, 'Gym', 'MANUAL', '18:00', '19:00', 10, 'STRONG', 127, '2026-11-04', 1, 2)"
+            )
+            execSQL(
+                "INSERT INTO task (id, name, due_date, base_points, created_date, points, active, mbs_mask) " +
+                    "VALUES (1, 'Renew passport', '2026-11-12', 10, '2026-11-05', 0, 1, 0)"
+            )
+            execSQL("INSERT INTO reminder_log (id, habit_id, day, kind, due_at, result) VALUES (1, 1, '2026-11-05', 'START', 0, 'DONE')")
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            assertEquals(null, db.habits().get(1)!!.remindBefore)
+            val task = db.tasks().get(1)!!
+            assertEquals("Renew passport", task.name)
+            assertEquals(null, task.dueTime)
+            assertEquals(null, db.reminders().get(1)!!.taskId)
+            db.tasks().update(task.copy(dueTime = java.time.LocalTime.of(9, 30), remindBefore = 60))
+            assertEquals(java.time.LocalTime.of(9, 30), db.tasks().get(1)!!.dueTime)
+        } finally {
+            db.close()
+        }
+    }
 }

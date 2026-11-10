@@ -552,9 +552,12 @@ private fun taskStatus(t: TaskToday): String = when {
     t.isDone && t.daysLate > 0 -> "Done ${dayCount(t.daysLate)} late · +${t.points}"
     t.isDone -> "Done on time · +${t.points}"
     t.daysLate > 0 -> "Overdue by ${dayCount(t.daysLate)} · now worth ${t.points}"
-    t.daysLate == 0L -> "Due today · worth ${t.points}"
-    else -> "Due ${t.task.dueDate.format(DUE_DAY)} · worth ${t.points}"
+    t.daysLate == 0L -> "Due today${dueAt(t)} · worth ${t.points}"
+    else -> "Due ${t.task.dueDate.format(DUE_DAY)}${dueAt(t)} · worth ${t.points}"
 }
+
+/** " at 18:00" when the task has a due time, else nothing. */
+private fun dueAt(t: TaskToday): String = t.task.dueTime?.let { " at ${it.format(HHMM)}" } ?: ""
 
 /** One task: the done button, the name, and its due date as a coloured chip. */
 @Composable

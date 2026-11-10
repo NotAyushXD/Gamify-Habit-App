@@ -31,6 +31,16 @@ data class PlanHabit(
     val skipped: Boolean,
     /** The time the user promised to do it today, if there is an open promise. */
     val promiseAt: LocalTime? = null,
+    /** Minutes before the window start for an early reminder, if the user chose one. */
+    val remindBefore: Int? = null,
+)
+
+/** An open task with a due time, as the planner sees it. */
+data class PlanTask(
+    val id: Long,
+    val due: LocalDateTime,
+    /** Minutes before [due] for an early reminder, if the user chose one. */
+    val remindBefore: Int? = null,
 )
 
 /** A reminder_log row for today. */
@@ -40,6 +50,7 @@ data class PlanLog(
     val kind: ReminderKind,
     val dueAt: LocalDateTime,
     val result: ReminderResult,
+    val taskId: Long? = null,
 )
 
 /** A popup that has not been handled yet. [logId] is set for a waiting snooze. */
@@ -49,6 +60,7 @@ data class Planned(
     val at: LocalDateTime,
     val expiresAt: LocalDateTime,
     val logId: Long? = null,
+    val taskId: Long? = null,
 )
 
 data class Decision(val show: List<Planned>, val suppress: List<Planned>)
@@ -74,14 +86,16 @@ fun startAndSnoozeLeft(windowStart: LocalTime, windowEnd: LocalTime, logs: List<
 }
 
 /**
- * Every popup for [day] that still needs handling: the window-start reminder, the last-chance
- * reminder, waiting snoozes, and the 11 PM checklist.
+ * Every popup for [day] that still needs handling: the early, window-start and last-chance
+ * reminders, waiting snoozes, task reminders, and the 11 PM checklist. Early and task reminders
+ * are the user's own choice, so (like a promise) they are outside the daily limit.
  */
 fun planDay(
     day: LocalDate,
     habits: List<PlanHabit>,
     logs: List<PlanLog>,
     rules: ReminderRules,
+    tasks: List<PlanTask> = emptyList(),
 ): List<Planned> {
     val cfg = rules.config
     val endOfDay = day.atTime(LocalTime.MAX)
@@ -96,6 +110,12 @@ fun planDay(
             planned += Planned(h.id, ReminderKind.PROMISE, day.atTime(h.promiseAt), endOfDay)
         }
         if (!h.scheduled || h.skipped) continue
+        // The early heads-up ends when the window starts (then the start reminder comes). An early
+        // time before midnight would belong to the day before: none then.
+        val early = h.remindBefore?.let { day.atTime(h.windowStart).minusMinutes(it.toLong()) }
+        if (early != null && early.toLocalDate() == day && mine.none { it.kind == ReminderKind.EARLY }) {
+            planned += Planned(h.id, ReminderKind.EARLY, early, day.atTime(h.windowStart))
+        }
         val windowEnd = day.atTime(h.windowEnd)
         // Spec 6.2: max 3 reminders a day (start + snoozes + last chance together).
         val left = startAndSnoozeLeft(h.windowStart, h.windowEnd, mine, rules)
@@ -114,6 +134,18 @@ fun planDay(
         }
     }
 
+    for (t in tasks) {
+        val mine = logs.filter { it.taskId == t.id }
+        if (t.due.toLocalDate() == day && mine.none { it.kind == ReminderKind.TASK_DUE }) {
+            planned += Planned(null, ReminderKind.TASK_DUE, t.due, endOfDay, taskId = t.id)
+        }
+        // The early one can fall on an earlier day (e.g. 1 day before): it is planned on that day.
+        val early = t.remindBefore?.let { t.due.minusMinutes(it.toLong()) }
+        if (early != null && early.toLocalDate() == day && mine.none { it.kind == ReminderKind.TASK_EARLY }) {
+            planned += Planned(null, ReminderKind.TASK_EARLY, early, t.due, taskId = t.id)
+        }
+    }
+
     if (rules.checklistEnabled && logs.none { it.kind == ReminderKind.CHECKLIST }) {
         planned += Planned(null, ReminderKind.CHECKLIST, day.atTime(cfg.checklistTime), endOfDay)
     }
@@ -122,7 +154,7 @@ fun planDay(
 
 /**
  * Splits the popups that are due at [now] into the ones to show and the ones that must not show
- * (expired, or quiet hours). One popup per habit at a time: if several are due together
+ * (expired, or quiet hours). One popup per habit or task at a time: if several are due together
  * (the phone was off), only the most urgent one shows.
  */
 fun decide(now: LocalDateTime, planned: List<Planned>, rules: ReminderRules): Decision {
@@ -132,15 +164,19 @@ fun decide(now: LocalDateTime, planned: List<Planned>, rules: ReminderRules): De
     for (p in due) {
         if (now > p.expiresAt || inQuietHours(now.toLocalTime(), rules)) suppress += p else show += p
     }
-    val urgency = listOf(ReminderKind.PROMISE, ReminderKind.LAST_CHANCE, ReminderKind.SNOOZE, ReminderKind.START)
-    val onePerHabit = show.filter { it.habitId != null }
-        .groupBy { it.habitId }
-        .flatMap { (_, list) ->
-            val keep = list.minBy { urgency.indexOf(it.kind) }
-            suppress += list - keep
+    val urgency = listOf(
+        ReminderKind.PROMISE, ReminderKind.LAST_CHANCE, ReminderKind.SNOOZE, ReminderKind.START, ReminderKind.EARLY,
+        ReminderKind.TASK_DUE, ReminderKind.TASK_EARLY,
+    )
+    fun mostUrgent(list: List<Planned>, key: (Planned) -> Long?): List<Planned> =
+        list.filter { key(it) != null }.groupBy(key).flatMap { (_, same) ->
+            val keep = same.minBy { urgency.indexOf(it.kind) }
+            suppress += same - keep
             listOf(keep)
         }
-    return Decision(show = onePerHabit + show.filter { it.habitId == null }, suppress = suppress)
+    val habits = mostUrgent(show) { it.habitId }
+    val tasks = mostUrgent(show) { it.taskId }
+    return Decision(show = habits + tasks + show.filter { it.habitId == null && it.taskId == null }, suppress = suppress)
 }
 
 /** The time of the next popup after [now], or null if nothing else is planned today. */

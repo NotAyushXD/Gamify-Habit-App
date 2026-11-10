@@ -17,6 +17,10 @@ data class ReminderConfig(
     val tasksOnFirstPopup: Int = 3,
     /** During a phone call, check again after this many seconds. */
     val callRetrySeconds: Long = 60,
+    /** Early-reminder choices in the editor, in minutes before a habit's window starts. */
+    val habitEarlyChoices: List<Int> = listOf(15, 30, 60, 120, 180),
+    /** Early-reminder choices in minutes before a task's due time (1440 = 1 day). */
+    val taskEarlyChoices: List<Int> = listOf(15, 60, 180, 1440),
 ) {
     companion object {
         val DEFAULT = ReminderConfig()

@@ -48,6 +48,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import com.ayushpant.habitquest.reminders.quietClash
+import com.ayushpant.habitquest.reminders.inQuietHours
+import com.ayushpant.habitquest.reminders.ReminderConfig
 import com.ayushpant.habitquest.reminders.ReminderRules
 import com.ayushpant.habitquest.reminders.QuietClash
 import com.ayushpant.habitquest.HabitQuestApp
@@ -122,9 +124,14 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
     var dims by remember { mutableStateOf(emptySet<Dimension>()) }
     var dimsTouched by remember { mutableStateOf(false) }
 
+    // Early reminder before the window (minutes; null = off)
+    var habitRemindBefore by remember { mutableStateOf<Int?>(null) }
+
     // Task fields
     var loadedTask by remember { mutableStateOf<Task?>(null) }
     var dueDate by remember { mutableStateOf(LocalDate.now()) }
+    var dueTime by remember { mutableStateOf<LocalTime?>(null) }
+    var taskRemindBefore by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(id) {
         if (isNew) return@LaunchedEffect
@@ -140,11 +147,14 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                 zoneId = h.zoneId
                 dims = dimensionsOf(h.mbsMask)
                 dimsTouched = h.mbsMask != 0
+                habitRemindBefore = h.remindBefore
             }
             ItemKind.TASK -> repo.getTask(id)?.let { t ->
                 loadedTask = t
                 name = t.name
                 dueDate = t.dueDate
+                dueTime = t.dueTime
+                taskRemindBefore = t.remindBefore
                 dims = dimensionsOf(t.mbsMask)
                 dimsTouched = t.mbsMask != 0
             }
@@ -195,6 +205,7 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                             daysMask = daysMask, mbsMask = maskOf(dims),
                             type = habitType, sourcePackage = if (habitType == HabitType.APP) sourcePackage else null,
                             zoneId = if (habitType == HabitType.ZONE) zoneId else null,
+                            remindBefore = habitRemindBefore,
                         )
                     )
                 }
@@ -202,7 +213,12 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                     val base = loadedTask ?: Task(
                         name = "", dueDate = dueDate, basePoints = cfg.basePoints, createdDate = LocalDate.now(),
                     )
-                    repo.saveTask(base.copy(name = name.trim(), dueDate = dueDate, mbsMask = maskOf(dims)))
+                    repo.saveTask(
+                        base.copy(
+                            name = name.trim(), dueDate = dueDate, mbsMask = maskOf(dims),
+                            dueTime = dueTime, remindBefore = if (dueTime != null) taskRemindBefore else null,
+                        )
+                    )
                 }
             }
             onDone()
@@ -306,6 +322,25 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                             QuietClash.ALL -> QuietNote("🌙 This time is in your quiet hours ($quiet), so no reminder will pop up. Pick another time, or change quiet hours in Settings.")
                         }
                     }
+                    Text("Early reminder", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ChipFlow {
+                        FilterChip(selected = habitRemindBefore == null, onClick = { habitRemindBefore = null }, label = { Text("Off") })
+                        for (m in ReminderConfig.DEFAULT.habitEarlyChoices) {
+                            FilterChip(selected = habitRemindBefore == m, onClick = { habitRemindBefore = m }, label = { Text("${beforeLabel(m)} before") })
+                        }
+                    }
+                    habitRemindBefore?.takeIf { windowValid }?.let { m ->
+                        if (windowStart.toSecondOfDay() < m * 60) {
+                            QuietNote("This would be before midnight, so there is no early reminder. Pick a shorter time.")
+                        } else {
+                            val early = windowStart.minusMinutes(m.toLong())
+                            if (reminderRules?.let { inQuietHours(early, it) } == true) {
+                                QuietNote("🌙 ${early.format(HHMM)} is in your quiet hours, so the early reminder won't pop up.")
+                            } else {
+                                Hint("A heads-up at ${early.format(HHMM)}, plus the usual reminder at ${windowStart.format(HHMM)}.")
+                            }
+                        }
+                    }
                     ChipFlow {
                         for ((label, mask) in DAY_PRESETS) {
                             FilterChip(selected = daysMask == mask, onClick = { daysMask = mask }, label = { Text(label) })
@@ -336,7 +371,28 @@ fun EditorScreen(repo: HabitRepository, initialKind: ItemKind, id: Long, onDone:
                         }
                         AssistChip(onClick = { pickDate(dueDate) { dueDate = it } }, label = { Text("📅 Pick a date") })
                     }
-                    Text("Due ${dueDate.format(DUE_DATE)}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Due ${dueDate.format(DUE_DATE)}" + (dueTime?.let { " at ${it.format(HHMM)}" } ?: ""), style = MaterialTheme.typography.bodyMedium)
+                    val time = dueTime
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (time == null) {
+                            AssistChip(onClick = { pickTime(LocalTime.of(9, 0)) { dueTime = it } }, label = { Text("⏰ Add a time") })
+                        } else {
+                            OutlinedButton(onClick = { pickTime(time) { dueTime = it } }) { Text("⏰ ${time.format(HHMM)}") }
+                            TextButton(onClick = { dueTime = null; taskRemindBefore = null }) { Text("No time") }
+                        }
+                    }
+                    if (time == null) {
+                        Hint("Add a time to get a reminder for it.")
+                    } else {
+                        Text("Reminder at ${time.format(HHMM)}. Also remind me:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        ChipFlow {
+                            FilterChip(selected = taskRemindBefore == null, onClick = { taskRemindBefore = null }, label = { Text("No") })
+                            for (m in ReminderConfig.DEFAULT.taskEarlyChoices) {
+                                FilterChip(selected = taskRemindBefore == m, onClick = { taskRemindBefore = m }, label = { Text("${beforeLabel(m)} before") })
+                            }
+                        }
+                        Hint("Points count by the date. The time is only for the reminder.")
+                    }
                 }
             }
 
@@ -486,6 +542,13 @@ private val TIME_PRESETS = listOf(
 
 /** Monday = bit 0 … Sunday = bit 6. */
 private val DAY_PRESETS = listOf("Every day" to EVERY_DAY_MASK, "Weekdays" to 0b001_1111, "Weekends" to 0b110_0000)
+
+/** 15 → "15 min", 60 → "1 h", 1440 → "1 day". */
+internal fun beforeLabel(minutes: Int): String = when {
+    minutes % 1440 == 0 -> if (minutes == 1440) "1 day" else "${minutes / 1440} days"
+    minutes % 60 == 0 -> "${minutes / 60} h"
+    else -> "$minutes min"
+}
 
 private fun duePresets(today: LocalDate): List<Pair<String, LocalDate>> {
     val saturday = today.with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.SATURDAY))

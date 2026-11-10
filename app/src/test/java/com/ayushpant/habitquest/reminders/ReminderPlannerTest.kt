@@ -158,4 +158,73 @@ class ReminderPlannerTest {
         assertEquals(QuietClash.ALL, quietClash(t(23, 40), t(23, 59), rules))
         assertEquals(QuietClash.NONE, quietClash(t(0, 40), t(5, 0), rules.copy(quietEnabled = false)))
     }
+
+    // ---- Early and task reminders (developer request, Nov 10, 2026) -------------------------------
+
+    private val noChecklist get() = rules.copy(checklistEnabled = false)
+
+    @Test
+    fun `an early reminder comes before the window, ends when it starts, and is outside the daily limit`() {
+        val early = meditate.copy(remindBefore = 60)
+        val planned = planDay(day, listOf(early), emptyList(), noChecklist.copy(maxPerHabit = 1))
+        val heads = planned.single { it.kind == ReminderKind.EARLY }
+        assertEquals(at(5, 30), heads.at)
+        assertEquals(at(6, 30), heads.expiresAt)
+        assertTrue(planned.any { it.kind == ReminderKind.START }) // the limit of 1 still leaves the start reminder
+    }
+
+    @Test
+    fun `no early reminder before midnight, when done, skipped, unscheduled, or already logged`() {
+        val early = meditate.copy(remindBefore = 180) // 06:30 − 3 h = 03:30, fine
+        assertTrue(planDay(day, listOf(early), emptyList(), noChecklist).any { it.kind == ReminderKind.EARLY })
+        val tooEarly = meditate.copy(remindBefore = 420) // 06:30 − 7 h: the day before
+        assertTrue(planDay(day, listOf(tooEarly), emptyList(), noChecklist).none { it.kind == ReminderKind.EARLY })
+        for (h in listOf(early.copy(done = true), early.copy(skipped = true), early.copy(scheduled = false))) {
+            assertTrue(planDay(day, listOf(h), emptyList(), noChecklist).none { it.kind == ReminderKind.EARLY })
+        }
+        val logged = listOf(log(1, ReminderKind.EARLY, ReminderResult.CLOSED, at(3, 30)))
+        assertTrue(planDay(day, listOf(early), logged, noChecklist).none { it.kind == ReminderKind.EARLY })
+    }
+
+    @Test
+    fun `when the early and the start reminder are due together, only the start one shows`() {
+        val planned = planDay(day, listOf(meditate.copy(remindBefore = 15)), emptyList(), noChecklist)
+        val d = decide(at(6, 30), planned, rules) // the early one is still live until 06:30
+
+        assertEquals(listOf(ReminderKind.START), d.show.map { it.kind })
+        assertTrue(d.suppress.any { it.kind == ReminderKind.EARLY })
+    }
+
+    @Test
+    fun `a task with a due time gets a reminder then, and an early one on the right day`() {
+        val task = PlanTask(7, at(18, 0), remindBefore = 60)
+        val planned = planDay(day, emptyList(), emptyList(), noChecklist, listOf(task))
+        assertEquals(
+            setOf(ReminderKind.TASK_EARLY to at(17, 0), ReminderKind.TASK_DUE to at(18, 0)),
+            planned.map { it.kind to it.at }.toSet(),
+        )
+        assertTrue(planned.all { it.taskId == 7L && it.habitId == null })
+
+        // 1 day before: planned on the day before only, and it ends at the due time.
+        val dayBefore = PlanTask(8, day.plusDays(1).atTime(9, 0), remindBefore = 1440)
+        val today = planDay(day, emptyList(), emptyList(), noChecklist, listOf(dayBefore)).single()
+        assertEquals(ReminderKind.TASK_EARLY to at(9, 0), today.kind to today.at)
+        assertEquals(day.plusDays(1).atTime(9, 0), today.expiresAt)
+        assertTrue(planDay(day.plusDays(1), emptyList(), emptyList(), noChecklist, listOf(dayBefore)).none { it.kind == ReminderKind.TASK_EARLY })
+    }
+
+    @Test
+    fun `a task reminder already logged is not planned again`() {
+        val task = PlanTask(7, at(18, 0))
+        val logged = listOf(PlanLog(1, null, ReminderKind.TASK_DUE, at(18, 0), ReminderResult.CLOSED, taskId = 7))
+        assertTrue(planDay(day, emptyList(), logged, noChecklist, listOf(task)).isEmpty())
+    }
+
+    @Test
+    fun `one popup per task, and tasks never hide a habit reminder`() {
+        val planned = planDay(day, listOf(meditate), emptyList(), noChecklist, listOf(PlanTask(7, at(6, 30), remindBefore = 0)))
+        val d = decide(at(6, 31), planned, rules)
+        assertEquals(setOf(ReminderKind.START, ReminderKind.TASK_DUE), d.show.map { it.kind }.toSet())
+        assertEquals(listOf(ReminderKind.TASK_EARLY), d.suppress.map { it.kind })
+    }
 }
