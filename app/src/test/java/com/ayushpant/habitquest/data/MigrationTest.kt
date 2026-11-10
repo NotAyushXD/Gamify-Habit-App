@@ -163,4 +163,26 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 6 to 7 keeps coins and adds the egg, creatures and bond`() = runBlocking {
+        createDatabaseAtVersion(6).apply {
+            execSQL("INSERT INTO coin_ledger (id, time, amount, reason, source_key, mbs_mask) VALUES (1, 1, 12, 'TASK', 'task:1', 2)")
+            execSQL("INSERT INTO coin_credit (source_key, credited) VALUES ('task:1', 12)")
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            assertEquals(12, db.coins().balance())
+            assertEquals(12, db.coins().credited("task:1"))
+            val day = LocalDate.of(2026, 11, 10)
+            db.eggs().insert(Egg(themeId = "creatures", needed = 100, headStart = 20, startedDay = day))
+            assertEquals(20, db.eggs().getOpen("creatures")!!.total)
+            val owned = db.creatures().insert(OwnedCreature(themeId = "creatures", creatureId = "any", hatchDay = day, companion = true))
+            db.creatures().insertBond(BondEvent(sessionId = 1, ownedId = owned))
+            assertEquals(listOf(1L), db.creatures().bondedSessionIds())
+        } finally {
+            db.close()
+        }
+    }
 }

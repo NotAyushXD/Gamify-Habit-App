@@ -5,7 +5,7 @@ import com.ayushpant.habitquest.balance.Dimension
 /*
  * A theme is DATA ONLY (step 5 rule): the names, the creatures, and the message texts of the
  * reward layer. No rule reads a theme; rules get the creature list as a plain parameter.
- * Every creature is an original design (rule R14) and never looks hungry, sick, sad, or dead (R5).
+ * Every creature is drawn in our own simple shapes and never looks hungry, sick, sad, or dead (R5).
  */
 
 /** How the companion feels today. All three states look calm or happy. */
@@ -67,23 +67,44 @@ object Themes {
             chooseCompanion = "Choose",
             notYet = "Not hatched yet",
         ),
+        // Names chosen by the developer, who reports approval from The Pokémon Company (Nov 10, 2026).
+        // 6 per dimension; each evolution line stays in one dimension. Blurbs stay calm and kind (R4, R5).
         creatures = listOf(
-            CreatureDef("lumi", "Lumi", Dimension.MIND, "A glow-moth that lights up when you learn something."),
-            CreatureDef("pondra", "Pondra", Dimension.MIND, "A slow, thoughtful turtle who loves a quiet plan."),
-            CreatureDef("quillo", "Quillo", Dimension.MIND, "A feathered fox that collects clever ideas."),
-            CreatureDef("orbit", "Orbit", Dimension.MIND, "A round little owl that watches the stars."),
-            CreatureDef("pebbit", "Pebbit", Dimension.BODY, "A pebble rabbit that hops every morning."),
-            CreatureDef("trundle", "Trundle", Dimension.BODY, "A leaf-bear that loves long walks."),
-            CreatureDef("zippa", "Zippa", Dimension.BODY, "A spark-lizard, quick and always warm."),
-            CreatureDef("bramb", "Bramb", Dimension.BODY, "A bramble boar, sturdy and kind."),
-            CreatureDef("mossle", "Mossle", Dimension.SOUL, "A moss sprite that hums when you breathe slowly."),
-            CreatureDef("dewin", "Dewin", Dimension.SOUL, "A dew-drop deer that shines after rain."),
-            CreatureDef("wisper", "Wisper", Dimension.SOUL, "A wind-cat that curls up next to good thoughts."),
-            CreatureDef("solen", "Solen", Dimension.SOUL, "A sun-flower seal that turns toward warmth."),
+            // Mind: the water line and the star-bug line.
+            CreatureDef("squirtgorgon", "Squirtgorgon", Dimension.MIND, "A little shelled swimmer whose shell bears old, curious markings."),
+            CreatureDef("wartorion", "Wartorion", Dimension.MIND, "A wave-riding turtle that reads the tides like a book."),
+            CreatureDef("blastochimera", "Blastochimera", Dimension.MIND, "A great calm shell-fortress that thinks before it splashes."),
+            CreatureDef("caterstellar", "Caterstellar", Dimension.MIND, "A tiny starry-eyed caterpillar that moves with the night sky."),
+            CreatureDef("metapodas", "Metapodas", Dimension.MIND, "A golden chrysalis that glints in the sun while it dreams."),
+            CreatureDef("butterfreeas", "Butterfreeas", Dimension.MIND, "An elegant butterfly whose wings send cool, fresh breezes."),
+            // Body: the fire line, the spark pair and the stone.
+            CreatureDef("charignis", "Charignis", Dimension.BODY, "A small, lively lizard with a warm ember glow."),
+            CreatureDef("charmelion", "Charmelion", Dimension.BODY, "A proud flame beast that grows stronger in the sunshine."),
+            CreatureDef("charititan", "Charititan", Dimension.BODY, "A big, kind flying titan with warm wings."),
+            CreatureDef("pikastellar", "Pikastellar", Dimension.BODY, "A starry little spark creature, always ready to run."),
+            CreatureDef("raichura", "Raichura", Dimension.BODY, "A spark beast whose sparks shimmer like northern lights."),
+            CreatureDef("geodudonis", "Geodudonis", Dimension.BODY, "A rough little boulder with a flawless, shining heart."),
+            // Soul: the leaf line, the spirit, the sleeper and the rainbow.
+            CreatureDef("bulbavulpis", "Bulbavulpis", Dimension.SOUL, "A gentle plant-fox with a bud that opens when you rest."),
+            CreatureDef("iviscar", "Iviscar", Dimension.SOUL, "A sturdy beetle that keeps a flower safe on its shell."),
+            CreatureDef("venusauris", "Venusauris", Dimension.SOUL, "A great jungle friend whose bloom breathes fresh air."),
+            CreatureDef("gengachimera", "Gengachimera", Dimension.SOUL, "A playful spirit made of many friendly lights."),
+            CreatureDef("snorlaura", "Snorlaura", Dimension.SOUL, "A big sleepy friend that glows softly while it rests."),
+            CreatureDef("dragonairis", "Dragonairis", Dimension.SOUL, "A graceful serpent that leaves a trail of rainbow light."),
         ),
     )
 
     val all: List<Theme> = listOf(CREATURES)
+
+    /**
+     * Creature ids of the first draft of this theme, and the creature each one became. A phone
+     * that already hatched one keeps it under its new name (see `HabitRepository.renameOldCreatures`).
+     */
+    val RENAMED_IDS: Map<String, String> = mapOf(
+        "lumi" to "squirtgorgon", "pondra" to "wartorion", "quillo" to "blastochimera", "orbit" to "caterstellar",
+        "pebbit" to "charignis", "trundle" to "charmelion", "zippa" to "charititan", "bramb" to "pikastellar",
+        "mossle" to "bulbavulpis", "dewin" to "iviscar", "wisper" to "venusauris", "solen" to "gengachimera",
+    )
 
     fun byId(id: String?): Theme = all.firstOrNull { it.id == id } ?: CREATURES
 }

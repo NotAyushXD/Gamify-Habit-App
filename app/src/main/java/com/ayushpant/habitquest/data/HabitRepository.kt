@@ -334,10 +334,13 @@ class HabitRepository(
         onChange()
     }
 
-    /** "Not done": the task is open again and its points are removed. */
+    /** "Not done": the task is open again; its points and the coins it gave are removed. */
     suspend fun reopenTask(id: Long) {
         val t = db.tasks().get(id) ?: return
-        db.tasks().update(t.copy(doneDay = null, doneAt = null, points = 0))
+        db.withTransaction {
+            db.tasks().update(t.copy(doneDay = null, doneAt = null, points = 0))
+            takeBack(listOf(taskKey(id)))
+        }
         onChange()
     }
 
@@ -412,10 +415,16 @@ class HabitRepository(
         }
     }
 
-    /** Removes a session (a mistaken tick, or a started session the user cancels). */
+    /**
+     * Removes a session (a mistaken tick, or a started session the user cancels). The coins and
+     * the bond it gave go back, and so does that day's bonus if the removal ends it.
+     */
     suspend fun removeSession(sessionId: Long) {
         val s = db.sessions().get(sessionId) ?: return
-        changeDay(s.day, s.habitId) { db.sessions().delete(sessionId) }
+        changeDay(s.day, s.habitId, undo = listOf(habitKey(s.habitId, s.day), bonusKey(s.day))) {
+            db.sessions().delete(sessionId)
+            db.creatures().deleteBond(sessionId)
+        }
     }
 
     // ---- Zones and zone habits (spec 5.3) ------------------------------------------------------
@@ -613,12 +622,14 @@ class HabitRepository(
     /**
      * Runs [block], then fixes the points. For today (an open day) that is a rescore. For a closed
      * day the habit's streak is replayed from [day], because every later day depends on it.
+     * [undo] names the coin sources the user just undid: their coins go back (see [takeBack]).
      */
-    private suspend fun changeDay(day: LocalDate, habitId: Long? = null, block: suspend () -> Unit) {
+    private suspend fun changeDay(day: LocalDate, habitId: Long? = null, undo: List<String> = emptyList(), block: suspend () -> Unit) {
         closePendingDays() // the streak must be up to date before today is scored
         db.withTransaction {
             block()
             if (day >= today() || habitId == null) rescoreDay(today()) else replayHabit(habitId, day)
+            takeBack(undo)
             settleCoins()
         }
         onChange()
@@ -752,6 +763,7 @@ class HabitRepository(
         if (closed > 0) db.withTransaction { rescoreDay(today()) }
         applyRuleChanges()
         backfillDimensions()
+        renameOldCreatures()
         db.withTransaction { settleCoins() }
         db.signals().deleteOlderThan(clock.millis() - Duration.ofDays(SIGNAL_LOG_DAYS).toMillis())
         return closed
@@ -791,17 +803,79 @@ class HabitRepository(
         // An app updated from a version without coins has old points: they give no coins (developer
         // decision) and are recorded as paid, once. A fresh install has nothing old: it just starts.
         val record = db.appState().get(KEY_COINS_STARTED) == null && db.appState().get(KEY_LAST_CLOSED) != null
+        // The egg exists before any coin is paid, so its mark comes before the coins that feed it.
+        val theme = currentTheme()
+        val egg = db.eggs().getOpen(theme.id) ?: newEgg(theme, 0)
+        // An egg from before marks existed: mark it now, so later undos can find their growth.
+        if (db.appState().get(eggMarkKey(egg.id)) == null) db.appState().put(AppState(eggMarkKey(egg.id), db.coins().lastId().toString()))
         val habits = db.habits().getActive().associateBy { it.id }
         for (row in db.sessions().pointsByHabitDay()) {
             val habit = habits[row.habitId] ?: db.habits().get(row.habitId)
-            credit("habit:${row.habitId}:${row.day}", row.points, CoinReason.HABIT, habit?.mbsMask ?: 0, habit?.name, record)
+            credit(habitKey(row.habitId, row.day), row.points, CoinReason.HABIT, habit?.mbsMask ?: 0, habit?.name, record)
         }
-        for (b in db.dayBonus().getAll()) credit("bonus:${b.day}", b.points, CoinReason.DAY_BONUS, 0, "Perfect day", record)
-        for (t in db.tasks().getDone()) credit("task:${t.id}", t.points, CoinReason.TASK, t.mbsMask, t.name, record)
+        for (b in db.dayBonus().getAll()) credit(bonusKey(b.day), b.points, CoinReason.DAY_BONUS, 0, "Perfect day", record)
+        for (t in db.tasks().getDone()) credit(taskKey(t.id), t.points, CoinReason.TASK, t.mbsMask, t.name, record)
         if (db.appState().get(KEY_COINS_STARTED) == null) db.appState().put(AppState(KEY_COINS_STARTED, today().toString()))
-        val theme = currentTheme()
         bondSessions(theme)
-        if (db.eggs().getOpen(theme.id) == null) newEgg(theme, 0) // the first egg shows before any coin
+    }
+
+    private fun habitKey(habitId: Long, day: LocalDate) = "habit:$habitId:$day"
+    private fun bonusKey(day: LocalDate) = "bonus:$day"
+    private fun taskKey(taskId: Long) = "task:$taskId"
+    private fun eggMarkKey(eggId: Long) = "$KEY_EGG_MARK_PREFIX$eggId"
+
+    /** The points a coin source has now: a habit-day's confirmed sessions, a day bonus, a done task. */
+    private suspend fun currentPoints(key: String): Int {
+        val parts = key.split(":")
+        return when (parts[0]) {
+            "habit" -> db.sessions().getConfirmed(parts[1].toLong(), LocalDate.parse(parts[2])).sumOf { it.points }
+            "bonus" -> db.dayBonus().get(LocalDate.parse(parts[1]))?.points ?: 0
+            "task" -> db.tasks().get(parts[1].toLong())?.takeIf { it.doneDay != null }?.points ?: 0
+            else -> 0
+        }
+    }
+
+    /**
+     * The user undid a tick (a task reopened, a session removed): the coins that the item gave
+     * go back, with the egg growth they made (developer decision, Nov 10, 2026). Only for these
+     * [keys]: points that fall for any other reason (a time edit, a streak replay) keep their coins.
+     * The balance never goes below 0, and the credit drops only by what was taken, so ticking
+     * again pays back exactly that. Run inside a transaction, after the rescore.
+     */
+    private suspend fun takeBack(keys: List<String>) {
+        for (key in keys) {
+            val paid = db.coins().credited(key) ?: continue
+            val drop = paid - currentPoints(key)
+            if (drop <= 0) continue
+            // Never more than this source really paid: points from before coins existed are
+            // recorded as paid with no coins (see settleCoins).
+            val coins = minOf(drop, db.coins().netAfter(key, 0), db.coins().balance())
+            if (coins <= 0) continue
+            val mask = db.coins().maskOf(key) ?: 0
+            shrinkEgg(key, coins, mask) // before the correction row, which would lower the net
+            db.coins().insert(CoinLedger(time = clock.millis(), amount = -coins, reason = CoinReason.CORRECTION, sourceKey = key, mbsMask = mask, note = "Undone"))
+            db.coins().putCredit(CoinCredit(key, paid - coins))
+        }
+    }
+
+    /**
+     * Takes back up to [amount] growth that [key] gave the open egg: only coins paid after the egg
+     * started (its mark) went into it. Growth that went into an egg that has hatched stays, and so
+     * does the creature.
+     */
+    private suspend fun shrinkEgg(key: String, amount: Int, mask: Int) {
+        val egg = db.eggs().getOpen(currentTheme().id) ?: return
+        val mark = db.appState().get(eggMarkKey(egg.id))?.toLongOrNull() ?: return
+        val back = minOf(amount, db.coins().netAfter(key, mark))
+        if (back <= 0) return
+        val split = splitGrowth(back, mask)
+        db.eggs().update(
+            egg.copy(
+                growthMind = (egg.growthMind - (split[Dimension.MIND] ?: 0)).coerceAtLeast(0),
+                growthBody = (egg.growthBody - (split[Dimension.BODY] ?: 0)).coerceAtLeast(0),
+                growthSoul = (egg.growthSoul - (split[Dimension.SOUL] ?: 0)).coerceAtLeast(0),
+            )
+        )
     }
 
     private suspend fun credit(key: String, points: Int, reason: CoinReason, mbsMask: Int, note: String?, recordOnly: Boolean) {
@@ -861,7 +935,10 @@ class HabitRepository(
     private suspend fun newEgg(theme: Theme, carry: Int): Egg {
         val (needed, start) = eggTarget(db.eggs().countHatched(theme.id), cfg)
         val egg = Egg(themeId = theme.id, needed = needed, headStart = start + carry, startedDay = today())
-        return egg.copy(id = db.eggs().insert(egg))
+        val id = db.eggs().insert(egg)
+        // Coins in ledger rows after this id feed this egg; an undo uses it to find their growth.
+        db.appState().put(AppState(eggMarkKey(id), db.coins().lastId().toString()))
+        return egg.copy(id = id)
     }
 
     /** The egg is full: a creature the user does not have joins, or coins when all are owned. */
@@ -920,6 +997,21 @@ class HabitRepository(
         }
     }
 
+    /**
+     * The first draft of theme 1 had other creatures. A phone that hatched one keeps it, under the
+     * creature it became ([Themes.RENAMED_IDS]), with its hatch day and bond. Runs once.
+     */
+    private suspend fun renameOldCreatures() {
+        if (db.appState().get(KEY_CREATURE_NAMES) != null) return
+        db.withTransaction {
+            for ((from, to) in Themes.RENAMED_IDS) {
+                db.creatures().renameCreature(from, to)
+                db.eggs().renameCreature(from, to)
+            }
+            db.appState().put(AppState(KEY_CREATURE_NAMES, "2"))
+        }
+    }
+
     suspend fun recordTaskRun(task: String) {
         db.appState().put(AppState("task_last_run.$task", Instant.now(clock).toString()))
     }
@@ -936,6 +1028,10 @@ class HabitRepository(
         const val KEY_COINS_STARTED = "coins_started"
         /** The chosen theme id (5g); absent = the first theme. */
         const val KEY_THEME = "theme"
+        /** + egg id: the last coin_ledger id when that egg started. */
+        const val KEY_EGG_MARK_PREFIX = "egg_mark:"
+        /** Set once the first-draft creature ids are renamed (see renameOldCreatures). */
+        const val KEY_CREATURE_NAMES = "creature_names"
         /** Raise this when the streak rules change, so stored streaks are walked again. */
         const val RULES_VERSION = 2
         const val SIGNAL_LOG_DAYS = 14L

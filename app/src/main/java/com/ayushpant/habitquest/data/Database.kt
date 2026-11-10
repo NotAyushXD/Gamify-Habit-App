@@ -237,6 +237,9 @@ interface DayBonusDao {
     @Query("SELECT * FROM day_bonus")
     suspend fun getAll(): List<DayBonus>
 
+    @Query("SELECT * FROM day_bonus WHERE day = :day")
+    suspend fun get(day: LocalDate): DayBonus?
+
     @Query("SELECT * FROM day_bonus WHERE day BETWEEN :from AND :to")
     fun observeBetween(from: LocalDate, to: LocalDate): Flow<List<DayBonus>>
 }
@@ -287,6 +290,18 @@ interface CoinDao {
 
     @Upsert
     suspend fun putCredit(row: CoinCredit)
+
+    /** The newest ledger row id (0 when empty). Marks where an egg starts, see `HabitRepository.takeBack`. */
+    @Query("SELECT COALESCE(MAX(id), 0) FROM coin_ledger")
+    suspend fun lastId(): Long
+
+    /** Net coins of one source in rows after [afterId]. */
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM coin_ledger WHERE source_key = :key AND id > :afterId")
+    suspend fun netAfter(key: String, afterId: Long): Int
+
+    /** The Mind/Body/Soul mask a source was last paid with. */
+    @Query("SELECT mbs_mask FROM coin_ledger WHERE source_key = :key AND amount > 0 ORDER BY id DESC LIMIT 1")
+    suspend fun maskOf(key: String): Int?
 }
 
 @Dao
@@ -305,6 +320,9 @@ interface EggDao {
 
     @Insert
     suspend fun insert(egg: Egg): Long
+
+    @Query("UPDATE egg SET creature_id = :to WHERE creature_id = :from")
+    suspend fun renameCreature(from: String, to: String)
 
     @Update
     suspend fun update(egg: Egg)
@@ -338,6 +356,12 @@ interface CreatureDao {
 
     @Insert(onConflict = androidx.room.OnConflictStrategy.IGNORE)
     suspend fun insertBond(row: BondEvent)
+
+    @Query("DELETE FROM bond_event WHERE session_id = :sessionId")
+    suspend fun deleteBond(sessionId: Long)
+
+    @Query("UPDATE creature_owned SET creature_id = :to WHERE creature_id = :from")
+    suspend fun renameCreature(from: String, to: String)
 }
 
 /** Tells Room how to store java.time types. Dates and times are stored as ISO text, e.g. "2026-11-04". */

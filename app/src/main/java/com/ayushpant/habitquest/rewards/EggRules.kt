@@ -65,6 +65,9 @@ fun companionState(doneToday: Boolean, lastDoneBefore: LocalDate?, today: LocalD
     else -> CompanionState.WAITING
 }
 
-/** True when today's first session ends a resting period: the companion welcomes the user back. */
+/**
+ * True when today's first session ends a resting period: the companion welcomes the user back.
+ * Same gap as RESTING in [companionState], so a companion that rested this morning always welcomes.
+ */
 fun welcomesBack(doneToday: Boolean, lastDoneBefore: LocalDate?, today: LocalDate, cfg: ScoringConfig = ScoringConfig.DEFAULT): Boolean =
-    doneToday && lastDoneBefore != null && ChronoUnit.DAYS.between(lastDoneBefore, today) > cfg.companionRestingDays
+    doneToday && lastDoneBefore != null && ChronoUnit.DAYS.between(lastDoneBefore, today) >= cfg.companionRestingDays

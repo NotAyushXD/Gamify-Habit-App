@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.ayushpant.habitquest.balance.Dimension
 import com.ayushpant.habitquest.balance.maskOf
+import com.ayushpant.habitquest.rewards.Themes
 import com.ayushpant.habitquest.scoring.EVERY_DAY_MASK
 import com.ayushpant.habitquest.scoring.ScoringConfig
 import com.ayushpant.habitquest.ui.celebrationFor
@@ -516,28 +517,12 @@ class HabitRepositoryTest {
         assertEquals(20, today().coins) // kept
         repo.editSessionStart(session, LocalTime.of(7, 0)) // back to 10 points
         assertEquals(20, today().coins) // not paid again
-        repo.removeSession(session) // points and bonus gone
-        assertEquals(0, today().totalPoints)
-        assertEquals(20, today().coins)
         // A second habit done late: 3 points → 3 coins. Then moved in the window: 10 → +7 more.
         val b = newHabit("Read")
         setTime(monday, 21, 0); repo.tickHabit(b)
         assertEquals(23, today().coins)
         repo.editSessionStart(habitToday(b).done.single().id, LocalTime.of(7, 0))
         assertEquals(30, today().coins)
-    }
-
-    @Test
-    fun `reopening a task keeps its coins, and day close pays nothing twice`() = runBlocking {
-        val t = repo.saveTask(Task(name = "Call bank", dueDate = monday, basePoints = 10, createdDate = monday))
-        setTime(monday, 10, 0); repo.completeTask(t)
-        assertEquals(12, today().coins)
-        repo.reopenTask(t)
-        assertEquals(12, today().coins)
-        setTime(monday.plusDays(1), 1, 0)
-        repo.closePendingDays()
-        repo.closePendingDays()
-        assertEquals(12, today().coins)
     }
 
     @Test
@@ -553,6 +538,193 @@ class HabitRepositoryTest {
         assertEquals(0, today().coins) // old points recorded as paid, no coins
         repo.tickHabit(id) // 10 + bonus 10
         assertEquals(20, today().coins) // new points pay
+    }
+
+    // ---- Undo takes coins back (developer decision, Nov 10, 2026) ---------------------------------
+
+    @Test
+    fun `reopening a task takes its coins and growth back, ticking again pays again, day close pays nothing twice`() = runBlocking {
+        val t = bodyTask()
+        setTime(monday, 10, 0); repo.completeTask(t)
+        assertEquals(12, today().coins)
+        assertEquals(32, openEgg().total) // head start 20 + 12
+        repo.reopenTask(t)
+        assertEquals(0, today().coins)
+        assertEquals(20, openEgg().total)
+        repo.completeTask(t)
+        assertEquals(12, today().coins)
+        assertEquals(32, openEgg().total)
+        setTime(monday.plusDays(1), 1, 0)
+        repo.closePendingDays()
+        repo.closePendingDays()
+        assertEquals(12, today().coins)
+    }
+
+    @Test
+    fun `removing a tick takes back its coins, the day bonus it ended, its growth and its bond`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 6, 0); repo.closePendingDays()
+        db.creatures().insert(OwnedCreature(themeId = themeId, creatureId = Themes.CREATURES.creatures.first().id, hatchDay = monday, companion = true))
+        setTime(monday, 7, 0); repo.tickHabit(id) // 10 + the perfect-day bonus 10
+        assertEquals(20, today().coins)
+        assertEquals(40, openEgg().total)
+        assertEquals(1, today().rewards.companion!!.owned.bond)
+
+        repo.removeSession(habitToday(id).done.single().id)
+        assertEquals(0, today().coins)
+        assertEquals(20, openEgg().total)
+        assertEquals(0, today().rewards.companion!!.owned.bond)
+    }
+
+    @Test
+    fun `an undo never takes the balance below 0, and ticking again pays back only what was taken`() = runBlocking {
+        val t = bodyTask()
+        setTime(monday, 10, 0); repo.completeTask(t) // 12
+        assertTrue(repo.spendCoins(10, CoinReason.REWARD, "Coffee")) // 2 left
+        repo.reopenTask(t)
+        assertEquals(0, today().coins)
+        repo.completeTask(t)
+        assertEquals(2, today().coins)
+    }
+
+    @Test
+    fun `an undo never takes coins that old points did not give`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        // As on a phone updated from before coins: Monday's points are recorded as paid, with no coins.
+        db.appState().delete("coins_started")
+        db.openHelper.writableDatabase.execSQL("DELETE FROM coin_ledger")
+        db.openHelper.writableDatabase.execSQL("DELETE FROM coin_credit")
+        setTime(monday.plusDays(1), 7, 0)
+        repo.closePendingDays()
+        repo.tickHabit(id) // Tuesday: 10 + bonus 10
+        assertEquals(20, today().coins)
+        repo.removeSession(db.sessions().getConfirmed(id, monday).single().id)
+        assertEquals(20, today().coins)
+    }
+
+    // ---- Egg, creatures and companion (Step 5b) ---------------------------------------------------
+
+    private val themeId = Themes.DEFAULT_ID
+    private fun openEgg() = runBlocking { db.eggs().getOpen(themeId)!! }
+    private fun bodyTask(name: String = "Lift") = runBlocking {
+        repo.saveTask(Task(name = name, dueDate = monday, basePoints = 10, createdDate = monday, mbsMask = maskOf(setOf(Dimension.BODY))))
+    }
+
+    @Test
+    fun `the first egg shows at once with its head start, and a session that is not confirmed grows nothing`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0)
+        repo.startSession(id) // started, not Done
+        val egg = openEgg()
+        assertEquals(100, egg.needed)
+        assertEquals(20, egg.total)
+        assertEquals(0, egg.growthMind + egg.growthBody + egg.growthSoul)
+        assertEquals(1, today().rewards.egg!!.number)
+    }
+
+    @Test
+    fun `every coin earned is 1 growth, shared by the dimensions of its source`() = runBlocking {
+        val id = repo.saveHabit(
+            Habit(name = "Meditate", windowStart = LocalTime.of(6, 30), windowEnd = LocalTime.of(7, 30), basePoints = 10,
+                creatureLine = CreatureLine.CALM, daysMask = EVERY_DAY_MASK, createdDate = monday,
+                mbsMask = maskOf(setOf(Dimension.MIND, Dimension.SOUL)))
+        )
+        setTime(monday, 7, 0); repo.tickHabit(id) // 10 coins + the perfect-day bonus 10
+        val egg = openEgg()
+        assertEquals(20 + 20, egg.total)
+        // The habit: 5 Mind + 5 Soul. The bonus has no dimension: 4 Mind + 3 Body + 3 Soul.
+        assertEquals(9, egg.growthMind)
+        assertEquals(3, egg.growthBody)
+        assertEquals(8, egg.growthSoul)
+    }
+
+    @Test
+    fun `spending coins never lowers growth, and too few coins spends nothing`() = runBlocking {
+        val t = bodyTask()
+        setTime(monday, 10, 0); repo.completeTask(t) // 12 coins, 12 growth
+        val growth = openEgg().total
+        assertTrue(repo.spendCoins(10, CoinReason.REWARD, "Coffee"))
+        assertEquals(2, today().coins)
+        assertEquals(growth, openEgg().total)
+        assertFalse(repo.spendCoins(5, CoinReason.REWARD, "Too dear"))
+        assertEquals(2, today().coins)
+    }
+
+    @Test
+    fun `a full egg hatches a creature of the strongest dimension, and the next egg starts with its head start`() = runBlocking {
+        setTime(monday, 10, 0)
+        repeat(7) { repo.completeTask(bodyTask("Lift $it")) } // 7 × 12 = 84 Body growth; the egg needed 80 more
+        val owned = db.creatures().getOwned(themeId).single()
+        assertEquals(Dimension.BODY, Themes.CREATURES.creature(owned.creatureId)!!.dimension)
+        assertTrue(owned.companion) // the first creature becomes the companion
+        val egg = openEgg()
+        assertEquals(300, egg.needed)
+        assertEquals(30 + 4, egg.total) // head start + the 4 growth above the first egg's target
+        assertEquals(2, today().rewards.egg!!.number)
+        assertEquals(84, today().coins) // a hatch takes no coins
+    }
+
+    @Test
+    fun `a hatch is a big celebration`() = runBlocking {
+        setTime(monday, 10, 0)
+        val tasks = (0 until 7).map { bodyTask("Lift $it") }
+        tasks.dropLast(1).forEach { repo.completeTask(it) }
+        val before = today()
+        repo.completeTask(tasks.last())
+        val c = celebrationFor(before, today())!!
+        assertTrue(c.big)
+        assertEquals("🥚 It hatched!", c.title)
+    }
+
+    @Test
+    fun `with every creature owned a full egg gives 100 coins instead, which grow nothing, and still celebrates`() = runBlocking {
+        setTime(monday, 10, 0)
+        repo.closePendingDays() // makes the first egg
+        for (c in Themes.CREATURES.creatures) db.creatures().insert(OwnedCreature(themeId = themeId, creatureId = c.id, hatchDay = monday))
+        val tasks = (0 until 7).map { bodyTask("Lift $it") }
+        tasks.dropLast(1).forEach { repo.completeTask(it) }
+        val before = today()
+        repo.completeTask(tasks.last())
+        assertEquals(Themes.CREATURES.creatures.size, db.creatures().getOwned(themeId).size)
+        assertEquals(84 + ScoringConfig.DEFAULT.fullCollectionCoins, today().coins)
+        assertEquals(30 + 4, openEgg().total) // the 100 coins are not growth
+        val c = celebrationFor(before, today())!!
+        assertTrue(c.big)
+        assertEquals("🎉 It hatched!", c.title)
+    }
+
+    @Test
+    fun `a creature hatched under a first-draft id is kept under its new name, with its bond`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 6, 0); repo.closePendingDays()
+        // As on a phone with the first draft: an owned "pebbit" companion, from egg 1.
+        db.appState().delete(HabitRepository.KEY_CREATURE_NAMES)
+        val owned = db.creatures().insert(OwnedCreature(themeId = themeId, creatureId = "pebbit", hatchDay = monday, companion = true))
+        db.eggs().insert(Egg(themeId = themeId, needed = 100, headStart = 20, startedDay = monday, hatchedDay = monday, creatureId = "pebbit"))
+        setTime(monday, 7, 0); repo.tickHabit(id) // 1 bond; the tick also runs the rename
+
+        val view = today().rewards.companion!!
+        assertEquals(owned, view.owned.ownedId)
+        assertEquals("charignis", view.owned.def.id)
+        assertEquals(monday, view.owned.hatchDay)
+        assertEquals(1, view.owned.bond)
+        assertTrue(db.creatures().getOwned(themeId).none { it.creatureId == "pebbit" })
+    }
+
+    @Test
+    fun `each confirmed session is 1 bond for the companion`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 6, 0); repo.closePendingDays()
+        val companion = db.creatures().insert(
+            OwnedCreature(themeId = themeId, creatureId = Themes.CREATURES.creatures.first().id, hatchDay = monday, companion = true)
+        )
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        setTime(monday.plusDays(1), 7, 0); repo.tickHabit(id)
+        val view = today().rewards.companion!!
+        assertEquals(companion, view.owned.ownedId)
+        assertEquals(2, view.owned.bond)
+        assertEquals(1, view.stage)
     }
 
     // ---- App habits: detected sessions -----------------------------------------------------------

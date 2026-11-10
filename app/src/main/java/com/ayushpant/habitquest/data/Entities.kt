@@ -207,12 +207,16 @@ data class Zone(
 
 // ---- Added in database version 6 (Step 5a: coins) --------------------------------------------------
 
-/** Why coins moved. Earned reasons come with points; spent reasons come from the user. */
-enum class CoinReason { HABIT, DAY_BONUS, TASK, FULL_COLLECTION, REWARD }
+/**
+ * Why coins moved. Earned reasons come with points; spent reasons come from the user.
+ * CORRECTION: the user undid a tick, so the coins of that item went back (stored as text: no schema change).
+ */
+enum class CoinReason { HABIT, DAY_BONUS, TASK, FULL_COLLECTION, REWARD, CORRECTION }
 
 /**
  * Every coin movement, one row each. The balance is the sum of [amount]. Coins come with points
- * (1 coin per point) and only leave when the user spends them. Rule R6: never otherwise.
+ * (1 coin per point) and only leave when the user spends them, or undoes the tick that earned
+ * them (developer decision, Nov 10, 2026). Never because of a detection fault or a rescore.
  */
 @Entity(tableName = "coin_ledger", indices = [Index("time")])
 data class CoinLedger(
@@ -233,7 +237,7 @@ data class CoinLedger(
 /**
  * The most points a source (a habit-day, a day bonus, a task) has ever been paid as coins.
  * Points can go down after a History edit; coins never do. A later rise pays only the part above
- * this number, so the same points are never paid twice.
+ * this number, so the same points are never paid twice. A user undo lowers it by the coins taken back.
  */
 @Entity(tableName = "coin_credit")
 data class CoinCredit(
@@ -277,7 +281,7 @@ data class OwnedCreature(
 
 /**
  * One confirmed session counted as bond for the companion of that moment. Keyed by the session,
- * so a session is never counted twice; the row stays if the session is removed later (R1).
+ * so a session is never counted twice. The row goes only when the user removes the session.
  */
 @Entity(tableName = "bond_event", indices = [Index("owned_id")])
 data class BondEvent(

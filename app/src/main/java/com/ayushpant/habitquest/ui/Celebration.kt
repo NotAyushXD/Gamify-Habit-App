@@ -63,8 +63,13 @@ fun celebrationFor(before: TodayData, after: TodayData): Celebration? {
     val level = after.level
     val milestone = habit?.let { streakMilestone(it.streakDays) }
     val hatched = after.rewards.owned.drop(before.rewards.owned.size).firstOrNull()
+    // An egg hatched with no new creature: the collection was already complete, coins instead.
+    // (No egg before = the very first egg just appeared; that is not a hatch.)
+    val eggBefore = before.rewards.egg?.number
+    val eggDone = eggBefore != null && (after.rewards.egg?.number ?: 0) > eggBefore
     return when {
-        hatched != null -> Celebration(id, "🥚 It hatched!", after.rewards.theme.text.hatched(hatched.def.name, hatched.def.dimension), big = true)
+        hatched != null -> Celebration(id, "🥚 It hatched!", after.rewards.theme.text.hatched(hatched.def.name, hatched.def.dimension) + " $gain", big = true)
+        eggDone -> Celebration(id, "🎉 It hatched!", "${after.rewards.theme.text.fullCollection} $gain", big = true)
         level.number > before.level.number -> Celebration(id, "Level ${level.number}!", "You are now: ${level.title}", big = true)
         milestone != null -> Celebration(id, "🔥 $milestone-day streak!", "${habit.habit.name}, $milestone days in a row. Incredible.", big = true)
         after.dailyBonus > 0 && before.dailyBonus == 0 -> Celebration(id, "🌟 Perfect day!", "Everything planned is done. +${after.dailyBonus} bonus", big = true)

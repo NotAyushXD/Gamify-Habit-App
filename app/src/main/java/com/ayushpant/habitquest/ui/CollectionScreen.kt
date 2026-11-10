@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,7 +43,7 @@ import java.time.format.DateTimeFormatter
 
 private val HATCH_DAY = DateTimeFormatter.ofPattern("d MMM")
 
-/** All 12 creatures of the theme (step 5b): the ones hatched, grey shapes for the rest, and the egg. */
+/** All creatures of the theme (step 5b, 18 in the first theme): the ones hatched, grey shapes for the rest, and the egg. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CollectionScreen(repo: HabitRepository, onBack: () -> Unit) {
@@ -70,14 +71,16 @@ fun CollectionScreen(repo: HabitRepository, onBack: () -> Unit) {
                 item {
                     Text("${dim.emoji} ${dim.label}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp))
                 }
-                item {
+                // Rows of 3, so the cells keep a readable size whatever the theme's count.
+                for (row in theme.creatures.filter { it.dimension == dim }.chunked(3)) item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (def in theme.creatures.filter { it.dimension == dim }) {
+                        for (def in row) {
                             val owned = rewards.owned.firstOrNull { it.def.id == def.id }
                             CreatureCell(def, owned, theme.text.notYet, theme.text.chooseCompanion) {
                                 owned?.let { o -> scope.launch { repo.setCompanion(o.ownedId) } }
                             }
                         }
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }

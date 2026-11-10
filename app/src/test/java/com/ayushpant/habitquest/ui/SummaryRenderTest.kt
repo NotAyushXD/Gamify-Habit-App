@@ -20,6 +20,7 @@ import com.ayushpant.habitquest.reminders.PromiseContext
 import com.ayushpant.habitquest.data.CreatureLine
 import com.ayushpant.habitquest.data.Habit
 import com.ayushpant.habitquest.data.HabitRepository
+import com.ayushpant.habitquest.data.OwnedCreature
 import com.ayushpant.habitquest.data.Task
 import com.ayushpant.habitquest.scoring.EVERY_DAY_MASK
 import kotlinx.coroutines.runBlocking
@@ -118,6 +119,25 @@ class SummaryRenderTest {
         compose.setContent { HabitQuestTheme { SettingsScreen(reminders) } }
         compose.mainClock.advanceTimeBy(1_000)
         save(File("build/render").apply { mkdirs() }, "settings.png")
+        db.close()
+    }
+
+    @Test
+    fun renderCollection() {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries().build()
+        val repo = HabitRepository(db)
+        runBlocking {
+            repo.closePendingDays() // makes the first egg
+            val day = LocalDate.of(2026, 11, 10)
+            val creatures = com.ayushpant.habitquest.rewards.Themes.CREATURES.creatures
+            listOf(0, 4, 8).forEachIndexed { i, c ->
+                db.creatures().insert(OwnedCreature(themeId = com.ayushpant.habitquest.rewards.Themes.DEFAULT_ID, creatureId = creatures[c].id, hatchDay = day, companion = i == 0))
+            }
+        }
+        compose.setContent { HabitQuestTheme { CollectionScreen(repo, onBack = {}) } }
+        compose.mainClock.advanceTimeBy(1_000)
+        save(File("build/render").apply { mkdirs() }, "collection.png")
         db.close()
     }
 
