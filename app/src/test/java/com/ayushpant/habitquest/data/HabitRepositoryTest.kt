@@ -456,7 +456,7 @@ class HabitRepositoryTest {
         val afterOne = today()
         val first = celebrationFor(start, afterOne)!!
         assertFalse(first.big)
-        assertEquals("+10 points", first.subtitle)
+        assertEquals("+10 points · 🪙 +10", first.subtitle) // coins come with points (5a)
 
         repo.tickHabit(b)
         val perfect = celebrationFor(afterOne, today())!!
@@ -473,6 +473,86 @@ class HabitRepositoryTest {
         repo.completeTask(t) // 12
         assertEquals(32, today().lifetimePoints)
         assertEquals(1, today().level.number)
+    }
+
+
+    // ---- Coins (Step 5a) --------------------------------------------------------------------------
+
+    @Test
+    fun `coins equal points - habits, the daily bonus and tasks`() = runBlocking {
+        val a = newHabit("Meditate")
+        val t = repo.saveTask(Task(name = "Call bank", dueDate = monday, basePoints = 10, createdDate = monday))
+        setTime(monday, 7, 0)
+        repo.tickHabit(a) // 10 + daily bonus 10
+        repo.completeTask(t) // 12
+        assertEquals(32, today().lifetimePoints)
+        assertEquals(32, today().coins)
+        assertEquals(32, db.coins().balance())
+    }
+
+    @Test
+    fun `a session that is not confirmed gives no coins`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0)
+        repo.startSession(id) // started, not Done
+        assertEquals(0, today().coins)
+        val app = appHabit()
+        repo.suggestDetected("meditofoundation.medito", ms(7, 0), ms(7, 10), evidence = true, source = SessionSource.LIVE)
+        assertEquals(0, today().coins) // only suggested
+        assertTrue(db.coins().observeRecent(10).first().isEmpty())
+        assertNotNull(app)
+    }
+
+    @Test
+    fun `fewer points after an edit take no coins back, and the same points are never paid twice`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0)
+        repo.tickHabit(id) // 10 + the perfect-day bonus 10
+        assertEquals(20, today().coins)
+        val session = habitToday(id).done.single().id
+        setTime(monday, 22, 0) // an edit can not move a session into the future
+        repo.editSessionStart(session, LocalTime.of(21, 0)) // 0.3 → 3 points
+        assertEquals(3, habitToday(id).points)
+        assertEquals(20, today().coins) // kept
+        repo.editSessionStart(session, LocalTime.of(7, 0)) // back to 10 points
+        assertEquals(20, today().coins) // not paid again
+        repo.removeSession(session) // points and bonus gone
+        assertEquals(0, today().totalPoints)
+        assertEquals(20, today().coins)
+        // A second habit done late: 3 points → 3 coins. Then moved in the window: 10 → +7 more.
+        val b = newHabit("Read")
+        setTime(monday, 21, 0); repo.tickHabit(b)
+        assertEquals(23, today().coins)
+        repo.editSessionStart(habitToday(b).done.single().id, LocalTime.of(7, 0))
+        assertEquals(30, today().coins)
+    }
+
+    @Test
+    fun `reopening a task keeps its coins, and day close pays nothing twice`() = runBlocking {
+        val t = repo.saveTask(Task(name = "Call bank", dueDate = monday, basePoints = 10, createdDate = monday))
+        setTime(monday, 10, 0); repo.completeTask(t)
+        assertEquals(12, today().coins)
+        repo.reopenTask(t)
+        assertEquals(12, today().coins)
+        setTime(monday.plusDays(1), 1, 0)
+        repo.closePendingDays()
+        repo.closePendingDays()
+        assertEquals(12, today().coins)
+    }
+
+    @Test
+    fun `points from before coins existed give no coins`() = runBlocking {
+        val id = newHabit()
+        setTime(monday, 7, 0); repo.tickHabit(id)
+        // Simulate an app that scored before coins existed: forget the coins, keep the points.
+        db.appState().delete("coins_started")
+        db.openHelper.writableDatabase.execSQL("DELETE FROM coin_ledger")
+        db.openHelper.writableDatabase.execSQL("DELETE FROM coin_credit")
+        setTime(monday.plusDays(1), 7, 0)
+        repo.closePendingDays()
+        assertEquals(0, today().coins) // old points recorded as paid, no coins
+        repo.tickHabit(id) // 10 + bonus 10
+        assertEquals(20, today().coins) // new points pay
     }
 
     // ---- App habits: detected sessions -----------------------------------------------------------

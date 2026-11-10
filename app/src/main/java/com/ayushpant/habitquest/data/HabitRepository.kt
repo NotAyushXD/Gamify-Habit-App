@@ -79,6 +79,8 @@ data class TodayData(
     val tasks: List<TaskToday> = emptyList(),
     /** Every point ever earned: habits, daily bonuses and tasks. Gives the level. */
     val lifetimePoints: Int = 0,
+    /** Coins the user has now: earned with points, spent on rewards (Step 5). */
+    val coins: Int = 0,
 ) {
     val level: Level get() = levelFor(lifetimePoints)
 
@@ -206,6 +208,7 @@ class HabitRepository(
     }.combine(
         combine(db.sessions().observeTotalPoints(), db.dayBonus().observeTotalPoints(), db.tasks().observeTotalPoints()) { a, b, c -> a + b + c }
     ) { data, total -> data.copy(lifetimePoints = total) }
+        .combine(db.coins().observeBalance()) { data, coins -> data.copy(coins = coins) }
 
     suspend fun getHabit(id: Long): Habit? = db.habits().get(id)
 
@@ -259,9 +262,12 @@ class HabitRepository(
         val t = db.tasks().get(id) ?: return
         if (t.doneDay != null) return
         val day = today()
-        db.tasks().update(
-            t.copy(doneDay = day, doneAt = clock.millis(), points = taskPoints(cfg.basePoints, t.dueDate, day, cfg))
-        )
+        db.withTransaction {
+            db.tasks().update(
+                t.copy(doneDay = day, doneAt = clock.millis(), points = taskPoints(cfg.basePoints, t.dueDate, day, cfg))
+            )
+            settleCoins()
+        }
         onChange()
     }
 
@@ -550,6 +556,7 @@ class HabitRepository(
         db.withTransaction {
             block()
             if (day >= today() || habitId == null) rescoreDay(today()) else replayHabit(habitId, day)
+            settleCoins()
         }
         onChange()
     }
@@ -664,8 +671,9 @@ class HabitRepository(
                 val today = today()
                 val last = db.appState().get(KEY_LAST_CLOSED)?.let(LocalDate::parse)
                 if (last == null) {
-                    // First run after install: there is nothing before today to close.
+                    // First run after install: there is nothing before today to close, and coins start now.
                     db.appState().put(AppState(KEY_LAST_CLOSED, today.minusDays(1).toString()))
+                    db.appState().put(AppState(KEY_COINS_STARTED, today.toString()))
                     return@withTransaction false
                 }
                 val day = last.plusDays(1)
@@ -681,6 +689,7 @@ class HabitRepository(
         if (closed > 0) db.withTransaction { rescoreDay(today()) }
         applyRuleChanges()
         backfillDimensions()
+        db.withTransaction { settleCoins() }
         db.signals().deleteOlderThan(clock.millis() - Duration.ofDays(SIGNAL_LOG_DAYS).toMillis())
         return closed
     }
@@ -705,6 +714,38 @@ class HabitRepository(
                 Log.i(LOG_TAG, "Miss: ${habit.name} on $day, streak ${before.currentDays} -> ${after.currentDays}")
             }
         }
+    }
+
+    // ---- Coins (Step 5a) -------------------------------------------------------------------------
+
+    /**
+     * Pays coins for points, 1 coin per point (rule 5a). Every source of points (a habit on one
+     * day, a day bonus, a done task) is paid up to the most points it has ever had. Points that
+     * fall after a History edit take no coins back; points that rise pay only the difference.
+     * Run inside a transaction after every change of points.
+     */
+    private suspend fun settleCoins() {
+        // An app updated from a version without coins has old points: they give no coins (developer
+        // decision) and are recorded as paid, once. A fresh install has nothing old: it just starts.
+        val record = db.appState().get(KEY_COINS_STARTED) == null && db.appState().get(KEY_LAST_CLOSED) != null
+        val habits = db.habits().getActive().associateBy { it.id }
+        for (row in db.sessions().pointsByHabitDay()) {
+            val habit = habits[row.habitId] ?: db.habits().get(row.habitId)
+            credit("habit:${row.habitId}:${row.day}", row.points, CoinReason.HABIT, habit?.mbsMask ?: 0, habit?.name, record)
+        }
+        for (b in db.dayBonus().getAll()) credit("bonus:${b.day}", b.points, CoinReason.DAY_BONUS, 0, "Perfect day", record)
+        for (t in db.tasks().getDone()) credit("task:${t.id}", t.points, CoinReason.TASK, t.mbsMask, t.name, record)
+        if (db.appState().get(KEY_COINS_STARTED) == null) db.appState().put(AppState(KEY_COINS_STARTED, today().toString()))
+    }
+
+    private suspend fun credit(key: String, points: Int, reason: CoinReason, mbsMask: Int, note: String?, recordOnly: Boolean) {
+        val paid = db.coins().credited(key) ?: 0
+        val gain = points - paid
+        if (gain <= 0) return
+        if (!recordOnly) {
+            db.coins().insert(CoinLedger(time = clock.millis(), amount = gain, reason = reason, sourceKey = key, mbsMask = mbsMask, note = note))
+        }
+        db.coins().putCredit(CoinCredit(key, points))
     }
 
     /**
@@ -750,6 +791,8 @@ class HabitRepository(
         const val KEY_LAST_CLOSED = "last_closed_day"
         const val KEY_RULES_VERSION = "streak_rules_version"
         const val KEY_MBS_BACKFILL = "mbs_backfill"
+        /** Set the first time coins are settled; points from before that day give no coins. */
+        const val KEY_COINS_STARTED = "coins_started"
         /** Raise this when the streak rules change, so stored streaks are walked again. */
         const val RULES_VERSION = 2
         const val SIGNAL_LOG_DAYS = 14L

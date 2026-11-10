@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -331,6 +332,8 @@ private fun Header(today: TodayData) {
                 Text(greeting(LocalTime.now().hour), style = MaterialTheme.typography.headlineSmall)
                 Text(today.day.format(DAY_TITLE), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Pill("🪙 ${today.coins}", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+            Spacer(Modifier.width(8.dp))
             Pill("Lv ${level.number} · ${level.title}", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
         }
         Card(Modifier.fillMaxWidth()) {

@@ -57,6 +57,8 @@ fun celebrationFor(before: TodayData, after: TodayData): Celebration? {
     if (habit == null && task == null) return null
 
     val points = habit?.points ?: task!!.points
+    val coins = after.coins - before.coins
+    val gain = "+$points points" + if (coins > 0) " · 🪙 +$coins" else ""
     val id = System.nanoTime()
     val level = after.level
     val milestone = habit?.let { streakMilestone(it.streakDays) }
@@ -64,9 +66,9 @@ fun celebrationFor(before: TodayData, after: TodayData): Celebration? {
         level.number > before.level.number -> Celebration(id, "Level ${level.number}!", "You are now: ${level.title}", big = true)
         milestone != null -> Celebration(id, "🔥 $milestone-day streak!", "${habit.habit.name}, $milestone days in a row. Incredible.", big = true)
         after.dailyBonus > 0 && before.dailyBonus == 0 -> Celebration(id, "🌟 Perfect day!", "Everything planned is done. +${after.dailyBonus} bonus", big = true)
-        habit?.promise?.status == PromiseStatus.KEPT -> Celebration(id, "🤝 Promise kept!", "You did what you said you would. +$points", big = true)
-        task != null && task.daysLate <= 0 -> Celebration(id, "On time! ✅", "${task.task.name} · +$points", big = false)
-        else -> Celebration(id, CHEERS[Random.nextInt(CHEERS.size)], "+$points points", big = false)
+        habit?.promise?.status == PromiseStatus.KEPT -> Celebration(id, "🤝 Promise kept!", "You did what you said you would. $gain", big = true)
+        task != null && task.daysLate <= 0 -> Celebration(id, "On time! ✅", "${task.task.name} · $gain", big = false)
+        else -> Celebration(id, CHEERS[Random.nextInt(CHEERS.size)], gain, big = false)
     }
 }
 

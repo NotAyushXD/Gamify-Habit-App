@@ -71,6 +71,14 @@ Strong in Python, new to Kotlin and Android. Explain Android/Kotlin concepts sim
 | Reminder check | Settings shows the next reminder time and the last 20 reminder_log rows, to diagnose missing reminders. |
 | App habits (Step 3, v0.5) | Habit type "With an app" + an app picked from the launcher list (Medito first). The tile opens the app (LAUNCH signal). `HabitListenerService` (Notification access) follows the linked apps' media sessions; `detect/AudioTracker` ends a session after 60 s without audio, drops < 2 min, evidence at ≥ 5 min (values in `ScoringConfig`). The result is a SUGGESTED session (start/end set) shown on the tile and as a confirmation popup (Confirm / Not done → REJECTED). Never auto-confirmed. No foreground service: the listener stays bound by the system. Catch-up (v0.6, spec 5.2, brought forward from Step 6): with Usage access, `detect/CatchUp` reads `UsageStatsManager` events every hour (`CatchUpWorker`) and on app resume; `usageSessions` joins gaps < 2 min, keeps ≥ 3 min on screen; results are SUGGESTED with source CATCH_UP, no evidence. Not re-asked if overlapping a SUGGESTED or REJECTED session, or the day is done. Popups wait (stay on the tile) in quiet hours, calls and navigation. With Notification access, popups also wait while a navigation app is active. |
 
+## Decisions made after the spec (Step 5)
+
+The full plan is `Habit Quest Step 5 Plan (ASD-STE100).md`; the build prompt's rules R1–R14 apply (no reward without a user action, coins only go down when spent, no shaming, original creatures only, no accounts).
+
+| Topic | Decision |
+| --- | --- |
+| Coins (5a, v0.12) | 1 coin per point, paid when points are settled (`settleCoins`, after every change and at day close). `coin_ledger` holds every movement; `coin_credit` holds the most points each source (habit-day, day bonus, task) was ever paid, so points that fall after a History edit take no coins back and the same points are never paid twice. Points from before coins existed (`coins_started` in app_state) give no coins. DB v6 also adds `habit.cue_line` for 5f. |
+
 ## Code rules
 
 - Kotlin + Jetpack Compose, minSdk 29 (Android 10). Package `com.ayushpant.habitquest`.

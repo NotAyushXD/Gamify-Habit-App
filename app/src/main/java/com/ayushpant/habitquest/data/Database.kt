@@ -77,6 +77,10 @@ interface SessionDao {
 
     @Query("UPDATE session SET points = :points, bonus_points = :bonusPoints WHERE id = :id")
     suspend fun setPoints(id: Long, points: Int, bonusPoints: Int)
+
+    /** Confirmed points per habit and day, for paying coins (one source per habit per day). */
+    @Query("SELECT habit_id AS habitId, day, SUM(points) AS points FROM session WHERE status = 'CONFIRMED' GROUP BY habit_id, day")
+    suspend fun pointsByHabitDay(): List<HabitDayPoints>
 }
 
 @Dao
@@ -99,6 +103,9 @@ interface TaskDao {
     /** All open tasks, soonest due first. */
     @Query("SELECT * FROM task WHERE active = 1 AND done_day IS NULL ORDER BY due_date, id")
     suspend fun getOpen(): List<Task>
+
+    @Query("SELECT * FROM task WHERE done_day IS NOT NULL")
+    suspend fun getDone(): List<Task>
 
     @Query("SELECT * FROM task WHERE active = 1 AND done_day IS NULL ORDER BY due_date, id")
     fun observeOpen(): Flow<List<Task>>
@@ -220,6 +227,9 @@ interface DayBonusDao {
     @Query("SELECT COALESCE(SUM(points), 0) FROM day_bonus")
     fun observeTotalPoints(): Flow<Int>
 
+    @Query("SELECT * FROM day_bonus")
+    suspend fun getAll(): List<DayBonus>
+
     @Query("SELECT * FROM day_bonus WHERE day BETWEEN :from AND :to")
     fun observeBetween(from: LocalDate, to: LocalDate): Flow<List<DayBonus>>
 }
@@ -245,6 +255,30 @@ interface AppStateDao {
     suspend fun delete(key: String)
 }
 
+/** One row of [SessionDao.pointsByHabitDay]. */
+data class HabitDayPoints(val habitId: Long, val day: LocalDate, val points: Int)
+
+@Dao
+interface CoinDao {
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM coin_ledger")
+    fun observeBalance(): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM coin_ledger")
+    suspend fun balance(): Int
+
+    @Insert
+    suspend fun insert(row: CoinLedger): Long
+
+    @Query("SELECT * FROM coin_ledger ORDER BY id DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<CoinLedger>>
+
+    @Query("SELECT credited FROM coin_credit WHERE source_key = :key")
+    suspend fun credited(key: String): Int?
+
+    @Upsert
+    suspend fun putCredit(row: CoinCredit)
+}
+
 /** Tells Room how to store java.time types. Dates and times are stored as ISO text, e.g. "2026-11-04". */
 class Converters {
     @TypeConverter fun dateToText(d: LocalDate?): String? = d?.toString()
@@ -254,13 +288,14 @@ class Converters {
 }
 
 @Database(
-    version = 5,
+    version = 6,
     entities = [
         Habit::class, Session::class, Streak::class, DayBonus::class, SignalLog::class, AppState::class, Task::class,
         Settings::class, ReminderLog::class, HabitSkip::class, Promise::class, Zone::class,
+        CoinLedger::class, CoinCredit::class,
     ],
     // Room compares the schema files in app/schemas and writes each migration itself (new tables only).
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6)],
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -277,6 +312,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun skips(): HabitSkipDao
     abstract fun promises(): PromiseDao
     abstract fun zones(): ZoneDao
+    abstract fun coins(): CoinDao
 
     companion object {
         fun create(context: Context): AppDatabase =

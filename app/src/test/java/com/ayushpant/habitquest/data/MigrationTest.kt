@@ -137,4 +137,30 @@ class MigrationTest {
             db.close()
         }
     }
+
+    @Test
+    fun `version 5 to 6 keeps habits and sessions and adds coins and the cue line`() = runBlocking {
+        createDatabaseAtVersion(5).apply {
+            execSQL(
+                "INSERT INTO habit (id, name, type, window_start, window_end, base_points, creature_line, days_mask, created_date, active, mbs_mask) " +
+                    "VALUES (1, 'Gym', 'MANUAL', '18:00', '19:00', 10, 'STRONG', 127, '2026-11-04', 1, 3)"
+            )
+            execSQL(
+                "INSERT INTO session (id, habit_id, day, start_time, end_time, status, source, evidence_found, points, bonus_points) " +
+                    "VALUES (1, 1, '2026-11-05', 1, 2, 'CONFIRMED', 'MANUAL', 0, 10, 0)"
+            )
+            close()
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName).allowMainThreadQueries().build()
+        try {
+            val habit = db.habits().get(1)!!
+            assertEquals(null, habit.cueLine)
+            assertEquals(10, db.sessions().pointsByHabitDay().single().points)
+            assertEquals(0, db.coins().balance())
+            db.coins().insert(CoinLedger(time = 1, amount = 5, reason = CoinReason.HABIT, sourceKey = "habit:1:2026-11-05"))
+            assertEquals(5, db.coins().balance())
+        } finally {
+            db.close()
+        }
+    }
 }

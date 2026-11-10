@@ -23,6 +23,9 @@ import com.ayushpant.habitquest.data.HabitRepository
 import com.ayushpant.habitquest.data.Task
 import com.ayushpant.habitquest.scoring.EVERY_DAY_MASK
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancel
+import androidx.lifecycle.viewModelScope
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -100,6 +103,9 @@ class SummaryRenderTest {
         today.value = true
         compose.mainClock.advanceTimeBy(2_000)
         save(out, "today.png")
+        // The Today view model runs the day-close task in the background: stop it before closing the database.
+        todayVm.viewModelScope.cancel()
+        runBlocking { delay(300) }
         db.close()
     }
 

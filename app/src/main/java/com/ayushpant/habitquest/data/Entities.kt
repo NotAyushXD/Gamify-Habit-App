@@ -37,6 +37,8 @@ data class Habit(
     val active: Boolean = true,
     /** Mind = 1, Body = 2, Soul = 4 (see balance/Balance.kt). Added in database version 4. */
     @ColumnInfo(name = "mbs_mask", defaultValue = "0") val mbsMask: Int = 0,
+    /** "After I [cue], I will [habit]": what the user does right before the habit. Added in version 6. */
+    @ColumnInfo(name = "cue_line") val cueLine: String? = null,
 )
 
 @Entity(
@@ -201,4 +203,40 @@ data class Zone(
     val longitude: Double,
     @ColumnInfo(name = "radius_m") val radiusM: Int,
     val active: Boolean = true,
+)
+
+// ---- Added in database version 6 (Step 5a: coins) --------------------------------------------------
+
+/** Why coins moved. Earned reasons come with points; spent reasons come from the user. */
+enum class CoinReason { HABIT, DAY_BONUS, TASK }
+
+/**
+ * Every coin movement, one row each. The balance is the sum of [amount]. Coins come with points
+ * (1 coin per point) and only leave when the user spends them. Rule R6: never otherwise.
+ */
+@Entity(tableName = "coin_ledger", indices = [Index("time")])
+data class CoinLedger(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Epoch milliseconds. */
+    val time: Long,
+    /** Positive = earned, negative = spent. */
+    val amount: Int,
+    val reason: CoinReason,
+    /** What earned the coins, e.g. "habit:3:2026-11-09". Null for spending. */
+    @ColumnInfo(name = "source_key") val sourceKey: String? = null,
+    /** Mind / Body / Soul of the source (0 = none, e.g. the day bonus). Feeds the egg in 5b. */
+    @ColumnInfo(name = "mbs_mask", defaultValue = "0") val mbsMask: Int = 0,
+    /** A short label for the ledger screen, e.g. the habit name. */
+    val note: String? = null,
+)
+
+/**
+ * The most points a source (a habit-day, a day bonus, a task) has ever been paid as coins.
+ * Points can go down after a History edit; coins never do. A later rise pays only the part above
+ * this number, so the same points are never paid twice.
+ */
+@Entity(tableName = "coin_credit")
+data class CoinCredit(
+    @PrimaryKey @ColumnInfo(name = "source_key") val sourceKey: String,
+    val credited: Int,
 )
